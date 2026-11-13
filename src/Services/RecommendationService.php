@@ -17,7 +17,7 @@ use ConstructorIO\Laravel\Support\ResultTransformer;
  * together" and so on. Pods are created in the Constructor dashboard; you
  * reference them by ID.
  *
- *     Constructor::getRecommendations('home-bestsellers', ['num_results' => 8]);
+ *     Constructor::getRecommendations('home-bestsellers', ['limit' => 8]);
  *     Constructor::getItemRecommendations('pdp-complementary', 'GRILL-123');
  *     Constructor::getRecommendationPage('pdp', ['item_id' => 'GRILL-123']);
  *
@@ -35,11 +35,11 @@ class RecommendationService
      * The only parameters a page request accepts per pod (`pod_overrides`).
      * Everything else is page-wide, and Constructor answers 400 if an
      * override contains it, so these are checked before sending.
-     * `range_filters` and `hidden_fields` are this package's shortcuts for
-     * `filters` and `fmt_options`.
+     * `limit`, `range_filters` and `hidden_fields` are this package's names
+     * for `num_results`, `filters` and `fmt_options`.
      */
     private const POD_OVERRIDE_OPTIONS = [
-        'num_results', 'filters', 'range_filters', 'filter_match_types',
+        'limit', 'num_results', 'filters', 'range_filters', 'filter_match_types',
         'pre_filter_expression', 'fmt_options', 'hidden_fields', 'variations_map',
     ];
 
@@ -56,7 +56,8 @@ class RecommendationService
      * Results from a pod.
      *
      * Options:
-     *   num_results   int           How many items (default 8)
+     *   limit         int           How many items (1-100, default 8). `num_results`,
+     *                               Constructor's name, is also accepted.
      *   item_id       string|list   Item(s) the pod is about. Required by item-based
      *                               strategies (alternative_items, complementary_items, bundles)
      *   variation_id  string        Variation of item_id
@@ -72,7 +73,7 @@ class RecommendationService
     {
         return $this->attempt('recommendations', function () use ($podId, $options) {
             $parameters = array_merge(
-                ['num_results' => $this->clampNumResults($options['num_results'] ?? 8, 1)],
+                ['num_results' => $this->clampNumResults(self::limit($options) ?? 8, 1)],
                 array_filter([
                     'section' => $options['section'] ?? null,
                     'item_id' => isset($options['item_id']) ? array_values(array_map('strval', (array) $options['item_id'])) : null,
@@ -117,11 +118,12 @@ class RecommendationService
      *   variation_id  string        Variation of a single item_id
      *   term          string        For query_recommendations pods
      *   filters       array         ['brand' => ['Weber']], for filtered_items pods
-     *   num_results   int           Items per pod (0-100). Omit to use Constructor's default.
+     *   limit         int           Items per pod (0-100). Omit to use Constructor's default.
+     *                               `num_results` is also accepted.
      *   section       string        Index section
      *   pod_overrides array         Per-pod settings, keyed by pod ID:
-     *                 ['pdp-similar' => ['num_results' => 12, 'filters' => ['in_stock' => true]]]
-     *                 Allowed keys: num_results, filters, range_filters,
+     *                 ['pdp-similar' => ['limit' => 12, 'filters' => ['in_stock' => true]]]
+     *                 Allowed keys: limit (or num_results), filters, range_filters,
      *                 filter_match_types, pre_filter_expression, fmt_options,
      *                 hidden_fields, variations_map. An override replaces the
      *                 page-wide value for that pod; it isn't merged, so repeat
@@ -147,7 +149,7 @@ class RecommendationService
                     'item_id' => isset($options['item_id']) ? array_values(array_map('strval', (array) $options['item_id'])) : null,
                     'variation_id' => $options['variation_id'] ?? null,
                     'term' => $options['term'] ?? null,
-                    'num_results' => isset($options['num_results']) ? $this->clampNumResults($options['num_results'], 0) : null,
+                    'num_results' => self::limit($options) !== null ? $this->clampNumResults(self::limit($options), 0) : null,
                     'pod_overrides' => $podOverrides,
                 ], fn ($value) => $value !== null && $value !== '' && $value !== []),
                 ParameterBuilder::shared($options['filters'] ?? [], $options),
@@ -197,9 +199,12 @@ class RecommendationService
                 ));
             }
 
+            $limit = self::limit($override);
+            unset($override['limit'], $override['num_results']);
+
             $podParameters = ParameterBuilder::shared($override['filters'] ?? [], $override);
-            if (isset($override['num_results'])) {
-                $podParameters['num_results'] = $this->clampNumResults($override['num_results'], 0);
+            if ($limit !== null) {
+                $podParameters['num_results'] = $this->clampNumResults($limit, 0);
             }
 
             if ($podParameters !== []) {
@@ -208,6 +213,17 @@ class RecommendationService
         }
 
         return $parameter;
+    }
+
+    /**
+     * How many results the caller asked for: `limit`, or Constructor's own
+     * name `num_results` (the 1.x option). Null when neither is set.
+     *
+     * @param  array<string, mixed>  $options
+     */
+    private static function limit(array $options): mixed
+    {
+        return $options['limit'] ?? $options['num_results'] ?? null;
     }
 
     private function clampNumResults(mixed $value, int $minimum): int

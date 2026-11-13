@@ -98,7 +98,7 @@ The old names are `class_alias`es and will be removed in 3.0. Constructor argume
 
 - `searchComplementaryProducts()` is **removed**. It built a clothing-specific "complete the outfit" prompt. Use a `complementary_items` recommendation pod instead:
   ```php
-  Constructor::getItemRecommendations('pdp-complementary', $itemId, ['num_results' => 4]);
+  Constructor::getItemRecommendations('pdp-complementary', $itemId, ['limit' => 4]);
   ```
   You can also use the `item_results` returned by `askProductQuestion()`.
 - Agent paths use `rawurlencode`, so spaces become `%20` rather than `+`.
@@ -129,7 +129,18 @@ The old names are `class_alias`es and will be removed in 3.0. Constructor argume
 - `CONSTRUCTOR_SCOUT_SYNC_MODE=patch` sends saves as partial updates instead of full replacements.
 - The engine's 1.x extra methods (`autocomplete`, `browse`, `recommendations`, `getItem`) are removed. Use the facade or `CatalogService`.
 
-### 11. Errors
+### 11. Option names
+
+Options now follow one convention: `page` / `per_page` for paged lists, `limit` for everything else. The old names still work, so no change is required.
+
+| Method | 1.x | 2.0 |
+|---|---|---|
+| `getRecommendations()`, `getItemRecommendations()` | `num_results` | `limit` |
+| `getBrowseGroups()` | `max_items`, `max_children` | `limit`, `children_limit` |
+| `getCollections()` | `max_items` | `per_page` |
+| `getProductQuestions()`, `askProductQuestion()` | `num_results` | `limit` |
+
+### 12. Errors
 
 - Storefront reads still return empty results on failure by default. Set `CONSTRUCTOR_THROW_EXCEPTIONS=true` to throw.
 - Every exception extends `ConstructorException`. `AuthenticationException`, `RateLimitException` and `ApiException` carry the status code.

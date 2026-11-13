@@ -229,8 +229,8 @@ class SearchService
         $topCategories = [];
         if ($options['show_top_categories'] ?? true) {
             $topCategories = $this->getBrowseGroups([
-                'max_items' => $options['categories_limit'] ?? 5,
-                'max_children' => 0,
+                'limit' => $options['categories_limit'] ?? 5,
+                'children_limit' => 0,
             ]);
         }
 
@@ -247,7 +247,7 @@ class SearchService
             }
 
             $popularProducts = $this->recommendations
-                ->getRecommendations($podId, ['num_results' => $options['products_limit'] ?? 6] + $podOptions)
+                ->getRecommendations($podId, ['limit' => $options['products_limit'] ?? 6] + $podOptions)
                 ->products;
         }
 
@@ -416,10 +416,16 @@ class SearchService
     /**
      * The category tree, for navigation menus.
      *
-     *     Constructor::getBrowseGroups(['max_items' => 10, 'max_children' => 5, 'with_images' => true]);
+     *     Constructor::getBrowseGroups(['limit' => 10, 'children_limit' => 5, 'with_images' => true]);
      *
-     * Options: max_items, max_children, depth (how many levels to return),
-     * group_id (start from a sub-category), with_images, section.
+     * Options:
+     *   limit           int     Top-level groups to return (default 10)
+     *   children_limit  int     Children kept per group (default 5; 0 for none)
+     *   depth           int     Levels to request (groups_max_depth)
+     *   group_id        string  Start from this sub-category
+     *   with_images     bool    Add each group's first product image
+     *   section         string  Index section
+     * The 1.x names max_items and max_children are also accepted.
      *
      * @param  array<string, mixed>  $options
      * @return list<array<string, mixed>>
@@ -433,7 +439,7 @@ class SearchService
                 $parameters['filters'] = ['group_id' => [(string) $options['group_id']]];
             }
 
-            $maxChildren = (int) ($options['max_children'] ?? 5);
+            $maxChildren = (int) ($options['children_limit'] ?? $options['max_children'] ?? 5);
 
             // Depth to request: one level for the groups themselves, one more
             // when we skip the "All" root, and one more for their children.
@@ -451,7 +457,7 @@ class SearchService
                 $groups = $groups[0]['children'];
             }
 
-            $groups = array_slice($this->transformer->groups($groups, $maxChildren), 0, (int) ($options['max_items'] ?? 10));
+            $groups = array_slice($this->transformer->groups($groups, $maxChildren), 0, (int) ($options['limit'] ?? $options['max_items'] ?? 10));
 
             if ($options['with_images'] ?? false) {
                 foreach ($groups as &$group) {
@@ -467,14 +473,14 @@ class SearchService
     /**
      * Collections (curated product lists) set up in the dashboard.
      *
-     * @param  array<string, mixed>  $options  max_items, page, sort_by (id|display_name), sort_order, section
+     * @param  array<string, mixed>  $options  page, per_page (default 10; max_items, the 1.x name, also works), sort_by (id|display_name), sort_order, section
      * @return list<array<string, mixed>>
      */
     public function getCollections(array $options = []): array
     {
         return $this->attempt('getCollections', function () use ($options) {
             $parameters = $this->sectionParameters($options) + [
-                'num_results_per_page' => min(ParameterBuilder::MAX_PER_PAGE, max(1, (int) ($options['max_items'] ?? 10))),
+                'num_results_per_page' => min(ParameterBuilder::MAX_PER_PAGE, max(1, (int) ($options['per_page'] ?? $options['max_items'] ?? 10))),
                 'page' => ParameterBuilder::page($options),
             ];
 

@@ -54,6 +54,7 @@ A full review against Constructor's API reference and backend-integration docume
 
 ### Changed
 - Package renamed to `debello-io/constructor-laravel`.
+- Consistent option names: `page`/`per_page` for paged lists and `limit` for the rest (recommendations, category tree, agent questions). `num_results`, `max_items` and `max_children` still work.
 - Search and autocomplete use the documented `/v1/search` and `/v1/autocomplete` endpoints.
 - Filters use `filters[name]=value`, range filters use `min-max`, and lists use repeated keys.
 - Catalog requests use HTTP Basic auth with the API token, as documented.

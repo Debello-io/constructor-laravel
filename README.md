@@ -176,9 +176,9 @@ Every option (`offset`, `filter_match_types`, `pre_filter_expression`, `hidden_f
 $grills = Constructor::browse('group_id', 'gas-grills', ['brand' => 'Weber'], ['per_page' => 24]);
 $weber  = Constructor::browse('brand', 'Weber');
 
-$categories = Constructor::getBrowseGroups(['max_items' => 10, 'max_children' => 5]);
+$categories = Constructor::getBrowseGroups(['limit' => 10, 'children_limit' => 5]);
 
-$collections = Constructor::getCollections(['max_items' => 10]);
+$collections = Constructor::getCollections(['per_page' => 10]);
 $collection  = Constructor::getCollection('summer-cookout');      // name, data, or null
 $products    = Constructor::browseCollection('summer-cookout');
 
@@ -214,10 +214,10 @@ $zeroState = Constructor::getZeroStateData(['recommendation_pod_id' => 'zero-sta
 ### Recommendations
 
 ```php
-$bestsellers = Constructor::getRecommendations('home-bestsellers', ['num_results' => 8]);
+$bestsellers = Constructor::getRecommendations('home-bestsellers', ['limit' => 8]);
 
 // Item-based pods (alternatives, complementary items, bundles). Pass one ID or several (a cart).
-$accessories = Constructor::getItemRecommendations('pdp-complementary', 'TRG-780', ['num_results' => 4]);
+$accessories = Constructor::getItemRecommendations('pdp-complementary', 'TRG-780', ['limit' => 4]);
 
 $accessories->title;     // the pod's display name
 $accessories->products;
@@ -230,7 +230,7 @@ Fetch every pod on a dashboard-configured page in one request. Constructor remov
 ```php
 $page = Constructor::getRecommendationPage('pdp', [
     'item_id' => 'TRG-780',                                       // shared by every pod
-    'pod_overrides' => ['pdp-similar' => ['num_results' => 12]],  // per-pod settings
+    'pod_overrides' => ['pdp-similar' => ['limit' => 12]],  // per-pod settings
 ]);
 
 foreach ($page->podsWithResults() as $pod) {   // in the page's configured order

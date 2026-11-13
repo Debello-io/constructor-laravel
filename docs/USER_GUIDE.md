@@ -376,6 +376,18 @@ The full list is documented on `Support\ParameterBuilder`. `parameters` is the e
 
 Filter values must be scalars (strings, numbers, booleans). Anything else, such as a nested array from unvalidated request input, is ignored rather than sent. Validate request input before passing it in; see [A complete search controller](#a-complete-search-controller).
 
+### Option names
+
+The same names mean the same thing everywhere:
+
+| Option | Meaning | Used by |
+|--------|---------|---------|
+| `page`, `per_page` | Paged results (1-based page; `per_page` capped per endpoint) | Search, browse, collections, facets with options, quizzes, catalog lists |
+| `limit` | How many to return, for lists that aren't paged | Recommendations, category tree, agent questions, autocomplete sections |
+| `*_limit` | A limit for one part of a response | `children_limit`, `categories_limit`, `products_limit` |
+
+Constructor's own names and the 1.x names still work: `num_results` for `limit`, and `max_items` / `max_children` for the category tree and collections.
+
 ### What a product looks like
 
 Every method that returns products uses the same flat shape:
@@ -650,9 +662,9 @@ Filter names and values are URL-encoded once, so IDs such as `Grills & Smokers` 
 
 ```php
 $categories = Constructor::getBrowseGroups([
-    'max_items' => 10,     // top-level categories
-    'max_children' => 6,   // children per category
-    'with_images' => true, // see below
+    'limit' => 10,          // top-level categories
+    'children_limit' => 6,  // children per category
+    'with_images' => true,  // see below
 ]);
 
 foreach ($categories as $category) {
@@ -670,7 +682,7 @@ Other options:
 | Option | Meaning |
 |--------|---------|
 | `group_id` | Start from a sub-category instead of the root |
-| `depth` | How many levels to return. By default: one level, plus one to skip the "All" root (unless you pass `group_id`), plus one when `max_children` is above 0 |
+| `depth` | How many levels to return. By default: one level, plus one to skip the "All" root (unless you pass `group_id`), plus one when `children_limit` is above 0 |
 | `fmt_options` | Other formatting options; merged with the depth setting |
 | `section` | Index section |
 
@@ -678,7 +690,7 @@ Other options:
 
 ```php
 $navigation = Cache::remember('nav:categories', now()->addHour(), fn () =>
-    Constructor::getBrowseGroups(['max_items' => 8, 'with_images' => true])
+    Constructor::getBrowseGroups(['limit' => 8, 'with_images' => true])
 );
 ```
 
@@ -721,7 +733,7 @@ public function show(Request $request, string $category)
     return view('category.show', [
         'category' => $category,
         'results' => $results,
-        'subcategories' => Constructor::getBrowseGroups(['group_id' => $category, 'max_items' => 20]),
+        'subcategories' => Constructor::getBrowseGroups(['group_id' => $category, 'limit' => 20]),
     ]);
 }
 ```
@@ -1013,7 +1025,7 @@ A pod is a recommendation placement you configure in the Constructor dashboard: 
 ### Home page and landing pages
 
 ```php
-$bestsellers = Constructor::getRecommendations('home-bestsellers', ['num_results' => 8]);
+$bestsellers = Constructor::getRecommendations('home-bestsellers', ['limit' => 8]);
 
 echo $bestsellers->title;   // the pod's display name, e.g. "Best sellers this week"
 
@@ -1031,7 +1043,7 @@ Item-based strategies need the item (or items) they are about:
 $similar = Constructor::getItemRecommendations('pdp-alternatives', 'TRG-PRO780');
 
 // "Complete your cookout": covers, pellets, thermometers for this grill
-$accessories = Constructor::getItemRecommendations('pdp-complementary', 'TRG-PRO780', ['num_results' => 6]);
+$accessories = Constructor::getItemRecommendations('pdp-complementary', 'TRG-PRO780', ['limit' => 6]);
 
 // Everything in the cart
 $cartRecs = Constructor::getItemRecommendations('cart-complementary', $cart->pluck('sku')->all());
@@ -1047,7 +1059,7 @@ Use a `complementary_items` pod for accessory and "goes with" recommendations. I
 | `variation_id` | Variation-specific pods | `'variation_id' => 'TRG-PRO780-BRONZE'` |
 | `term` | query_recommendations | `'term' => 'brisket smoker'` |
 | `filters` | filtered_items | `'filters' => ['brand' => 'Traeger']` |
-| `num_results` | All (default 8) | `'num_results' => 4` |
+| `limit` | All (default 8; `num_results` also works) | `'limit' => 4` |
 | `section` | All | `'section' => 'Products'` |
 
 ```php
@@ -1108,8 +1120,8 @@ class Recommendations extends Component
     public function render()
     {
         $recommendations = $this->itemId
-            ? Constructor::getItemRecommendations($this->pod, $this->itemId, ['num_results' => $this->limit])
-            : Constructor::getRecommendations($this->pod, ['num_results' => $this->limit]);
+            ? Constructor::getItemRecommendations($this->pod, $this->itemId, ['limit' => $this->limit])
+            : Constructor::getRecommendations($this->pod, ['limit' => $this->limit]);
 
         return view('components.recommendations', ['recommendations' => $recommendations]);
     }
@@ -1131,9 +1143,9 @@ A recommendation page groups pods in the dashboard, for example a product page w
 ```php
 $page = Constructor::getRecommendationPage('pdp', [
     'item_id' => 'TRG-PRO780',     // shared by every pod on the page
-    'num_results' => 6,            // per pod; omit to use Constructor's default
+    'limit' => 6,                  // per pod; omit to use Constructor's default
     'pod_overrides' => [
-        'pdp-similar' => ['num_results' => 12, 'filters' => ['in_stock' => true]],
+        'pdp-similar' => ['limit' => 12, 'filters' => ['in_stock' => true]],
     ],
 ]);
 
@@ -1182,7 +1194,7 @@ Collections are curated product lists set up in the dashboard, such as "Summer c
 ### List collections
 
 ```php
-$collections = Constructor::getCollections(['max_items' => 12]);
+$collections = Constructor::getCollections(['per_page' => 12]);
 
 foreach ($collections as $collection) {
     echo $collection['name'];        // "Summer Cookout Essentials"
@@ -1355,7 +1367,7 @@ On product pages, suggest questions and answer them with AI, using the product's
 ```php
 $agent = Constructor::agent();
 
-$suggested = $agent->getProductQuestions('TRG-PRO780', ['num_results' => 4]);
+$suggested = $agent->getProductQuestions('TRG-PRO780', ['limit' => 4]);
 // ['questions' => ['How long does a full hopper last?', 'Does it have WiFi?', ...], '_raw' => [...]]
 
 $answer = $agent->askProductQuestion('Can I use it in the rain?', 'TRG-PRO780');
@@ -1371,7 +1383,7 @@ $answer['qna_result_id'];         // for tracking
 
 To stream an answer, use `askProductQuestionStreaming($question, $itemId, $onEvent, $threadId, $options)`. Its events are `start`, `message`, `follow_up_questions`, `item_results`, `error`, `end` and `complete`.
 
-Both methods accept `variation_id`, `guard`, `num_results`, `user_segments` and identity overrides.
+Both methods accept `variation_id`, `guard`, `limit` (`num_results` also works), `user_segments` and identity overrides.
 
 ### A product Q&A endpoint
 

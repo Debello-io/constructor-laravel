@@ -130,7 +130,7 @@ class AgentService
      */
     public function askShoppingAgentStreaming(#[SensitiveParameter] string $query, callable $onEvent, ?string $threadId = null, array $options = []): array
     {
-        $options = $this->withLegacyOptionNames($options);
+        $options = $this->normalizeOptions($options);
 
         $url = $this->api->storefrontUrl(
             $this->config->agentBaseUrl,
@@ -162,12 +162,12 @@ class AgentService
      * Returns ['questions' => []] if Constructor fails, so a product page
      * still renders. Set CONSTRUCTOR_THROW_EXCEPTIONS=true to throw instead.
      *
-     * @param  array<string, mixed>  $options  num_results (default 5), variation_id, user_segments, identity overrides
+     * @param  array<string, mixed>  $options  limit (questions to return, default 5; num_results also accepted), variation_id, user_segments, identity overrides
      * @return array{questions: list<string>, _raw: array<string, mixed>}
      */
     public function getProductQuestions(string $itemId, array $options = []): array
     {
-        $options = $this->withLegacyOptionNames($options);
+        $options = $this->normalizeOptions($options);
 
         return $this->attempt('getProductQuestions', function () use ($itemId, $options) {
             $parameters = array_merge(
@@ -194,7 +194,7 @@ class AgentService
      *     $answer = Constructor::agent()->askProductQuestion('Does this grill fit a 20 lb propane tank?', 'GRILL-123');
      *     echo $answer['answer'];
      *
-     * @param  array<string, mixed>  $options  guard, num_results, variation_id, user_segments, identity overrides
+     * @param  array<string, mixed>  $options  guard, limit (related products; num_results also accepted), variation_id, user_segments, identity overrides
      * @return array{
      *     answer: string,
      *     follow_up_questions: list<string>,
@@ -208,7 +208,7 @@ class AgentService
      */
     public function askProductQuestion(#[SensitiveParameter] string $question, string $itemId, ?string $threadId = null, array $options = []): array
     {
-        $options = $this->withLegacyOptionNames($options);
+        $options = $this->normalizeOptions($options);
 
         $response = $this->getJson(
             '/v1/item_questions/'.Path::segment($question).'/answer',
@@ -247,7 +247,7 @@ class AgentService
      */
     public function askProductQuestionStreaming(#[SensitiveParameter] string $question, string $itemId, callable $onEvent, ?string $threadId = null, array $options = []): array
     {
-        $options = $this->withLegacyOptionNames($options);
+        $options = $this->normalizeOptions($options);
 
         $url = $this->api->storefrontUrl(
             $this->config->agentBaseUrl,
@@ -584,8 +584,9 @@ class AgentService
     }
 
     /**
-     * Accept the option names 1.x used for the agent service.
+     * Map friendly and 1.x option names to the API's.
      *
+     *   limit        -> num_results (the package-wide name for "how many")
      *   filters      -> pre_filter_expression (the agent has no shopper-facing filters)
      *   session      -> session_id
      *   instance_id  -> client_id
@@ -594,12 +595,16 @@ class AgentService
      * @param  array<string, mixed>  $options
      * @return array<string, mixed>
      */
-    private function withLegacyOptionNames(array $options): array
+    private function normalizeOptions(array $options): array
     {
         if (isset($options['filters']) && ! isset($options['pre_filter_expression'])) {
             $options['pre_filter_expression'] = $options['filters'];
         }
         unset($options['filters']);
+
+        // `limit` is the package-wide name for "how many"; the API calls it num_results.
+        $options['num_results'] ??= $options['limit'] ?? null;
+        unset($options['limit']);
 
         $options['session_id'] ??= $options['session'] ?? null;
         $options['client_id'] ??= $options['instance_id'] ?? null;
