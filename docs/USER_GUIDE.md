@@ -79,6 +79,14 @@ CONSTRUCTOR_CLIENT_IDENTIFIER=cio-be-web-yourcompany
 ### Check that it works
 
 ```bash
+php artisan constructor:verify
+```
+
+It checks every setting (without printing secrets), then makes one storefront request and, if you set `CONSTRUCTOR_API_TOKEN`, one catalog request. Each line says what to fix. It exits with 1 if a check fails, so you can run it in a deploy pipeline; `--offline` checks only the configuration.
+
+Then try a search:
+
+```bash
 php artisan tinker
 ```
 
@@ -1721,6 +1729,44 @@ $batching->deleteVariations(['TRG-PRO780-OLD']);
 - Requests are never retried automatically. A `RateLimitException` (429) means you are sending too fast: back off and send the same records again, for example by releasing a queued job with a delay.
 - If one request of a long list fails, the exception is thrown and the rest aren't sent. Earlier requests were already accepted, so resending the whole list is safe.
 
+### From the command line
+
+Three Artisan commands cover the common catalog chores:
+
+```bash
+# Is everything configured, and are the credentials accepted?
+php artisan constructor:verify
+
+# Replace the catalog with these files and wait for Constructor to process them.
+php artisan constructor:upload storage/app/catalog/items.jsonl \
+    --variations=storage/app/catalog/variations.jsonl \
+    --item-groups=storage/app/catalog/item_groups.jsonl \
+    --wait
+
+# Update only the fields in a file (e.g. prices), creating unknown items.
+php artisan constructor:upload storage/app/catalog/prices.csv --operation=patch --patch-delta --on-missing=CREATE
+
+# Check on a task later.
+php artisan constructor:task 12345 --wait --timeout=900
+```
+
+`constructor:upload` options:
+
+| Option | Meaning |
+|--------|---------|
+| `items` (argument), `--variations`, `--item-groups` | The files. Pass at least one; the format (CSV or JSONL) comes from the extension. |
+| `--operation` | `create_or_replace` (default) replaces the whole section; `patch` replaces only the records in the files. Constructor has no delete upload: use `deleteItems()`. |
+| `--patch-delta` | With `patch`: change only the fields present in the files. |
+| `--on-missing` | With `--patch-delta`: `FAIL`, `IGNORE` or `CREATE` records that don't exist. |
+| `--mode` | With `create_or_replace`: `full`, or `ids` when the files only list the IDs to keep. |
+| `--section` | Index section (default `CONSTRUCTOR_SECTION`). |
+| `--email` | Who Constructor emails if the upload fails. Repeat it for several addresses. |
+| `--allow-large-removal` | Constructor's `force` flag: apply the upload even if it removes more than half of the catalog. |
+| `--wait`, `--timeout` | Wait for the task (default timeout `CONSTRUCTOR_TASK_TIMEOUT`). |
+| `--force` | Skip the confirmation a full replace asks for in production. |
+
+The commands print the task's status, what changed per section, ingestion warnings and any error. They exit with 1 when the task fails or `--wait` times out, and with 2 for invalid arguments (nothing is sent). Error messages never include tokens or Constructor's response body; add `-v` to see the body, which usually explains a rejected upload.
+
 ### A nightly sync job
 
 ```php
@@ -2345,6 +2391,7 @@ A `ConfigurationException` names the missing or invalid setting. Check `.env`, t
 
 ```bash
 php artisan config:clear
+php artisan constructor:verify
 ```
 
 ### Search returns no results

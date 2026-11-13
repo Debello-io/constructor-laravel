@@ -31,6 +31,7 @@ For a full walkthrough with complete controller and view examples, see the **[Us
 ```bash
 composer require debello-io/constructor-laravel
 php artisan vendor:publish --tag=constructor-config
+php artisan constructor:verify   # after adding the credentials below
 ```
 
 ## Credentials
@@ -366,6 +367,16 @@ $batching->deleteItems(['OLD-SKU-1']);   // returns ['accepted' => 1, 'responses
 ```
 
 Lists are sent 100 records per request (the service's limit). Requests go to `CONSTRUCTOR_CATALOG_BATCHING_BASE_URL` (default `https://batching.catalog.cnstrc.com`) with your API token, and are never retried automatically: on a `RateLimitException`, back off and resend.
+
+#### From the command line
+
+```bash
+php artisan constructor:upload storage/catalog/items.jsonl --variations=storage/catalog/variations.jsonl --wait
+php artisan constructor:upload storage/catalog/prices.csv --operation=patch --patch-delta
+php artisan constructor:task 12345 --wait
+```
+
+`constructor:upload` takes the same settings as `uploadCatalog()` (`--section`, `--mode`, `--on-missing`, `--email`, `--allow-large-removal` for Constructor's `force` flag). A full replace asks for confirmation in production unless you pass `--force`. Both commands exit with 1 if the task fails, so they work in deploy scripts and schedulers.
 
 ### Offline purchases and returns
 

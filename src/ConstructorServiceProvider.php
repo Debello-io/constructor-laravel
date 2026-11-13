@@ -3,6 +3,9 @@
 namespace ConstructorIO\Laravel;
 
 use ConstructorIO\Laravel\Collections\SearchResultCollection;
+use ConstructorIO\Laravel\Console\TaskCommand;
+use ConstructorIO\Laravel\Console\UploadCommand;
+use ConstructorIO\Laravel\Console\VerifyCommand;
 use ConstructorIO\Laravel\Contracts\SandboxSearchContract;
 use ConstructorIO\Laravel\Contracts\SearchProvider;
 use ConstructorIO\Laravel\Http\ApiClient;
@@ -26,8 +29,9 @@ use Laravel\Scout\EngineManager;
 use Laravel\Scout\Engines\Engine;
 
 /**
- * Registers the package's services, the facade target, the published config
- * and (when Laravel Scout is installed) the "constructor" Scout engine.
+ * Registers the package's services, the facade target, the published config,
+ * the Artisan commands and (when Laravel Scout is installed) the
+ * "constructor" Scout engine.
  */
 class ConstructorServiceProvider extends ServiceProvider
 {
@@ -66,6 +70,12 @@ class ConstructorServiceProvider extends ServiceProvider
             $this->publishes([
                 __DIR__.'/../config/constructor.php' => config_path('constructor.php'),
             ], 'constructor-config');
+
+            $this->commands([
+                VerifyCommand::class,
+                UploadCommand::class,
+                TaskCommand::class,
+            ]);
         }
 
         // The beacon's cookies are plain text and read by JavaScript. Stop
