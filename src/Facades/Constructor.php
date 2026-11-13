@@ -56,6 +56,7 @@ use RuntimeException;
  * @method static \ConstructorIO\Laravel\Services\BehaviorService behavior()
  * @method static \ConstructorIO\Laravel\Services\ProductDetailsService productDetails()
  * @method static \ConstructorIO\Laravel\Services\PreferenceService preferences()
+ * @method static \ConstructorIO\Laravel\Services\ConfigurationService configuration()
  * @method static void resolveUserIdUsing(\Closure|null $resolver)
  * @method static void resolveConsentUsing(\Closure|null $resolver)
  * @method static bool supportsZeroState()

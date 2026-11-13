@@ -12,6 +12,7 @@ use ConstructorIO\Laravel\Services\AgentService;
 use ConstructorIO\Laravel\Services\BehaviorService;
 use ConstructorIO\Laravel\Services\CatalogBatchingService;
 use ConstructorIO\Laravel\Services\CatalogService;
+use ConstructorIO\Laravel\Services\ConfigurationService;
 use ConstructorIO\Laravel\Services\PreferenceService;
 use ConstructorIO\Laravel\Services\ProductDetailsService;
 use ConstructorIO\Laravel\Services\QuizService;
@@ -38,6 +39,7 @@ use SplFileInfo;
  *     Constructor::behavior()->recordOfflinePurchases($storeSales);
  *     Constructor::productDetails()->getItem('TRG-780');
  *     Constructor::preferences()->setForCurrentUser('fuel_type', ['pellet']);
+ *     Constructor::configuration()->synonymGroups()->create(['bbq', 'barbecue']);
  *
  * Each method here only delegates, so its full documentation lives on the
  * service it calls.
@@ -54,6 +56,7 @@ class Constructor implements SearchProvider
         protected readonly BehaviorService $behavior,
         protected readonly ProductDetailsService $productDetails,
         protected readonly PreferenceService $preferences,
+        protected readonly ConfigurationService $configuration,
     ) {}
 
     /*
@@ -129,6 +132,15 @@ class Constructor implements SearchProvider
     public function preferences(): PreferenceService
     {
         return $this->preferences;
+    }
+
+    /**
+     * Merchandising configuration: redirect rules, synonyms, sort options,
+     * facets and searchandising rules. Requires CONSTRUCTOR_API_TOKEN.
+     */
+    public function configuration(): ConfigurationService
+    {
+        return $this->configuration;
     }
 
     /*

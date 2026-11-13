@@ -176,7 +176,7 @@ class ApiClient
      * second ingestion task for the same change.
      *
      * @param  array<string, mixed>  $query
-     * @param  array<string, mixed>|null  $json  Request body, sent as JSON.
+     * @param  array<mixed>|null  $json  Request body, sent as JSON: an object, or a list for endpoints whose body is a JSON array.
      * @param  string|null  $baseUrl  Defaults to the search host; pass the Catalog Batching Service host for its endpoints.
      * @return array<string, mixed>
      */

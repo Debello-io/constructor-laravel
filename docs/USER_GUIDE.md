@@ -1997,6 +1997,78 @@ php artisan constructor:task 12345 --wait --timeout=900
 
 The commands print the task's status, what changed per section, ingestion warnings and any error. They exit with 1 when the task fails or `--wait` times out, and with 2 for invalid arguments (nothing is sent). Error messages never include tokens or Constructor's response body; add `-v` to see the body, which usually explains a rejected upload.
 
+### Merchandising configuration
+
+Everything you configure in the dashboard's merchandising screens can also be managed from code with `Constructor::configuration()`. This is useful for keeping redirects and synonyms in version control, syncing facet display names from a PIM, or setting up a staging index the same way as production. It uses `CONSTRUCTOR_API_TOKEN`, and every call throws a `ConstructorException` on failure.
+
+| Accessor | What it manages | Section? |
+|----------|-----------------|----------|
+| `redirectRules()` | Searches that go straight to a page ("gift card" → `/gift-cards`) | No, index-wide |
+| `synonymGroups()` | Two-way synonyms ("bbq" = "barbecue" = "grill"), 1-20 phrases per group | Yes |
+| `oneWaySynonyms()` | One-way synonyms ("smoker" also finds "pellet grill"), 1-50 child phrases | No, index-wide |
+| `sortOptions()` | Sort options on results pages, identified by `sort_by` + `sort_order` | Yes |
+| `facets()` | Facet (filter) configurations: display name, type, range buckets, hidden/protected | Yes |
+| `facetOptions()` | How individual facet values appear: display names, positions, swatches, aliases | Yes |
+| `refinedQueries()` | Searchandising rules for one search query: slot, boost, bury, hide, banner content | Yes |
+
+Where a resource takes a section, pass it as the last argument (or `section` in the options); it defaults to `CONSTRUCTOR_SECTION`.
+
+```php
+$config = Constructor::configuration();
+
+// Redirect rules
+$rule = $config->redirectRules()->create([
+    'url' => '/gift-cards',
+    'matches' => [['pattern' => 'gift card', 'match_type' => 'PHRASE']],   // EXACT, PHRASE or UNORDERED
+    'end_time' => '2026-12-31T23:59:59',
+]);
+$config->redirectRules()->update($rule['id'], ['url' => '/holiday-gift-cards']);
+$config->redirectRules()->list(['status' => 'current', 'per_page' => 100]);
+
+// Synonyms
+$groupId = $config->synonymGroups()->create(['bbq', 'barbecue', 'grill']);
+$config->synonymGroups()->replace($groupId, ['bbq', 'barbecue']);
+$config->oneWaySynonyms()->create('smoker', ['pellet grill', 'offset smoker']);
+
+// Sort options
+$config->sortOptions()->create([
+    'sort_by' => 'price',
+    'sort_order' => 'ascending',
+    'path_in_metadata' => 'data.price',
+    'display_name' => 'Price: Low to High',
+]);
+$config->sortOptions()->update('price', 'ascending', ['position' => 1]);
+$config->sortOptions()->delete([['sort_by' => 'rating', 'sort_order' => 'ascending']]);
+
+// Facets and their options
+$config->facets()->create(['name' => 'fuel_type', 'path_in_metadata' => 'facets.fuel_type', 'type' => 'multiple', 'display_name' => 'Fuel type']);
+$config->facets()->create(['name' => 'price', 'path_in_metadata' => 'facets.price', 'type' => 'range', 'range_format' => 'boundaries']);   // a slider
+$config->facets()->updateMany([['name' => 'brand', 'sort_order' => 'value']]);
+$config->facetOptions()->updateMany('brand', [
+    ['value' => 'weber', 'display_name' => 'Weber'],
+    ['value' => 'traeger', 'display_name' => 'Traeger', 'position' => 1],
+]);
+
+// Searchandising for a search query
+$config->refinedQueries()->create([
+    'query' => 'smoker',
+    'slot_rules' => [['rule' => ['item_id' => 'TRG-780', 'position' => 1]]],
+    'boost_rules' => [['rule' => ['filters' => ['brand' => ['Traeger']], 'boost' => 5]]],          // -10 to 10
+    'blacklist_rules' => [['rule' => ['item_ids' => ['DISCONTINUED-1']]]],
+]);
+```
+
+Things to know:
+
+- **Method names are the same everywhere:** `list()`, `get()` (returns `null` when not found), `create()`, `replace()` (overwrites: fields you leave out are reset), `update()` (changes only what you pass) and `delete()`. Bulk methods are `replaceMany()` / `updateMany()`, and `deleteAll()` on the synonym services.
+- **Limits are handled for you:** `facets()->replaceMany()` sends 25 facets per request, `facets()->updateMany()` and `facetOptions()->updateMany()` 1,000, and `sortOptions()->delete()` 200. `sortOptions()->replaceMany()` takes at most 50 and throws `InvalidArgumentException` beyond that. `per_page` is capped at each endpoint's maximum.
+- **Bad arguments throw before anything is sent:** an empty name, a non-numeric rule ID, a sort order other than `ascending`/`descending`, or a synonym group with no phrases.
+- **Retries:** list and get calls are retried after connection errors, 429 and 5xx. Writes are never retried, so check the result and resend if you need to.
+- `refinedQueries()` takes `response_section`: `results` (the default) for product rules, or `facets` for rules that slot or hide facets for the query.
+- `synonymGroups()->deleteAll()` and `oneWaySynonyms()->deleteAll()` delete **every** synonym of that kind. There is no undo.
+
+See the API reference for every field: [Configuration](https://docs.constructor.com/reference/configuration-facets) and [Searchandising](https://docs.constructor.com/reference/v1-searchandising-create-refined-query).
+
 ### A nightly sync job
 
 ```php
