@@ -1,0 +1,12 @@
+# Keeps the SHA-pinned GitHub Actions in ci.yml up to date. Composer
+# dependencies are not listed: this is a library, so its constraints are
+# ranges and CI already tests the lowest and newest allowed versions.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      github-actions:
+        patterns: ['*']

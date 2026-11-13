@@ -5,15 +5,8 @@
     ],
     "permissions": {
         "allow": [
-            "Bash(composer test:*)",
-            "Bash(composer lint:*)",
-            "Bash(composer format:*)",
-            "Bash(composer analyse:*)",
-            "Bash(composer check:*)",
             "Bash(composer validate:*)",
-            "Bash(vendor/bin/phpunit:*)",
             "Bash(vendor/bin/pint:*)",
-            "Bash(vendor/bin/phpstan:*)",
             "Bash(php -l:*)",
             "Bash(git status:*)",
             "Bash(git diff:*)",

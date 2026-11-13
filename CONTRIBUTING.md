@@ -42,11 +42,11 @@ The repo ships Claude Code configuration:
 - `.mcp.json`: the Constructor docs MCP
 - `.claude/skills/`: `verify-against-constructor-docs`, `add-constructor-endpoint`, `release`
 - `.claude/agents/constructor-api-reviewer.md`: a read-only reviewer
-- `.claude/settings.json`: safe command permissions and a Pint hook
+- `.claude/settings.json`: pre-approves only commands that can't run repository code, plus a Pint hook
 
 Personal overrides go in `.claude/settings.local.json` (git-ignored).
 
-**Untrusted pull requests:** the pre-approved test and lint commands run code from the checked-out tree (test files, composer scripts, the PHPUnit and PHPStan configs). Review an untrusted PR before running them, or run them in a sandbox.
+**Untrusted pull requests:** `composer test`, `composer check`, PHPUnit and PHPStan run code from the checked-out tree (test files, composer scripts, the PHPUnit and PHPStan configs), so they are not pre-approved for Claude Code. Review an untrusted PR before running them, or run them in a sandbox.
 
 ## Pull requests
 

@@ -5,9 +5,9 @@ on:
     branches: [main]
   pull_request:
 
-# Actions are pinned to major-version tags for readability. For stronger
-# supply-chain guarantees, pin each one to a full commit SHA (with the tag in
-# a trailing comment) and let Dependabot keep them current.
+# Third-party actions are pinned to full commit SHAs, so a moved or hijacked
+# tag can't change what runs here. The trailing comment names the release;
+# Dependabot (.github/dependabot.yml) opens PRs to update both together.
 
 permissions:
   contents: read
@@ -21,9 +21,12 @@ jobs:
     name: Lint & static analysis
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          # Don't leave the job's GITHUB_TOKEN in .git/config for later steps.
+          persist-credentials: false
 
-      - uses: shivammathur/setup-php@v2
+      - uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # 2.40.0
         with:
           php-version: '8.4'
           coverage: none
@@ -33,7 +36,7 @@ jobs:
         run: echo "dir=$(composer config cache-files-dir)" >> "$GITHUB_OUTPUT"
 
       - name: Cache Composer downloads
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ${{ steps.composer-cache.outputs.dir }}
           key: composer-quality-${{ hashFiles('composer.json') }}
@@ -79,9 +82,12 @@ jobs:
             laravel: '13'
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          # Don't leave the job's GITHUB_TOKEN in .git/config for later steps.
+          persist-credentials: false
 
-      - uses: shivammathur/setup-php@v2
+      - uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # 2.40.0
         with:
           php-version: ${{ matrix.php }}
           extensions: curl, json, mbstring
@@ -92,7 +98,7 @@ jobs:
         run: echo "dir=$(composer config cache-files-dir)" >> "$GITHUB_OUTPUT"
 
       - name: Cache Composer downloads
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ${{ steps.composer-cache.outputs.dir }}
           key: composer-${{ matrix.php }}-${{ matrix.laravel }}-${{ matrix.stability }}-${{ hashFiles('composer.json') }}
