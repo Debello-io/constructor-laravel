@@ -51,6 +51,29 @@ class ApiClient
     /** Longest wait between retries, in milliseconds, whatever Retry-After says. */
     private const MAX_RETRY_DELAY_MS = 5000;
 
+    /**
+     * Identity parameters that particular endpoints refuse.
+     *
+     * The "Required parameters" guide says to send `_dt` and
+     * `origin_referrer` on every request, and the search-results endpoints
+     * accept them. These endpoints validate strictly instead, and answer 400
+     * ("_dt: Extra inputs are not permitted") for any parameter their API
+     * reference doesn't list. Found with `composer test:live` against a real
+     * index; each endpoint's reference lists the identity parameters it takes.
+     *
+     * Keyed by exact request path (none of these paths has a variable part).
+     *
+     * @var array<string, list<string>>
+     */
+    private const REJECTED_IDENTITY_PARAMETERS = [
+        '/browse/groups' => ['_dt'],
+        '/browse/facets' => ['_dt'],
+        '/browse/facets_with_options' => ['_dt'],
+        '/browse/facet_options' => ['_dt'],
+        '/browse/collections' => ['_dt'],
+        '/v2/image_search' => ['_dt', 'origin_referrer'],
+    ];
+
     private static bool $warnedAboutBackendToken = false;
 
     public function __construct(
@@ -192,10 +215,15 @@ class ApiClient
      */
     public function storefrontUrl(string $baseUrl, string $path, array $query = [], array $identity = []): string
     {
+        $identityParameters = array_diff_key(
+            $this->context->queryParameters($identity),
+            array_flip(self::REJECTED_IDENTITY_PARAMETERS[$path] ?? []),
+        );
+
         $parameters = array_merge(
             $query,
             ['key' => $this->config->requireApiKey()],
-            $this->context->queryParameters($identity),
+            $identityParameters,
         );
 
         return $baseUrl.$path.'?'.QueryString::build($parameters);

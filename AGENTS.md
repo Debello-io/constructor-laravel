@@ -72,6 +72,7 @@ Source: [Required parameters](https://docs.constructor.com/docs/integrating-with
 - Headers: forward the shopper's `User-Agent` (sanitized), and their IP in `X-Forwarded-For` as a single address via `Request::ip()` (relies on TrustProxies).
 - `origin_referrer` is the current page URL **without its query string** (for AJAX/fetch calls, the `Referer` without its query string). Query strings can hold reset tokens, signatures or emails.
 - Consent applies to explicit `client_id` overrides too. With `identity.require_consent=true`, shoppers count as not consenting until `resolveConsentUsing()` says otherwise.
+- A few endpoints answer 400 for identity parameters their reference doesn't list (`/browse/groups`, `/browse/facets`, `/browse/facets_with_options`, `/browse/facet_options`, `/browse/collections` reject `_dt`; `/v2/image_search` also rejects `origin_referrer`). `ApiClient::REJECTED_IDENTITY_PARAMETERS` drops them per path. Probe a new endpoint with `composer test:live` before assuming it accepts the full identity.
 - Endpoint `parameters` can't override `key` or identity values: `ApiClient::storefrontUrl()` merges them last. Change identity only through the identity overrides.
 - `result_id` must reach the page (`data-cnstrc-result-id`) so beacon events are attributed. Keep it on every DTO.
 

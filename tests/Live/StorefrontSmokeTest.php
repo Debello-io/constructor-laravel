@@ -3,6 +3,7 @@
 namespace ConstructorIO\Laravel\Tests\Live;
 
 use ConstructorIO\Laravel\Services\AgentService;
+use ConstructorIO\Laravel\Services\ProductDetailsService;
 use ConstructorIO\Laravel\Services\QuizService;
 use ConstructorIO\Laravel\Services\RecommendationService;
 use ConstructorIO\Laravel\Services\SearchService;
@@ -107,6 +108,29 @@ class StorefrontSmokeTest extends LiveTestCase
             ->naturalLanguageSearch("{$this->searchTerm()} under 500 dollars", [], ['per_page' => 3]));
 
         $this->assertNotNull($results->resultId);
+    }
+
+    public function test_image_search(): void
+    {
+        // A 1×1 PNG: enough to check the request is accepted, not to find anything.
+        $png = (string) base64_decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==');
+
+        $this->optionalFeature('Image search', fn () => $this->search()->searchByImage($png));
+
+        $this->addToAssertionCount(1);
+    }
+
+    public function test_product_details(): void
+    {
+        $itemId = self::env('CONSTRUCTOR_LIVE_ITEM_ID')
+            ?? ($this->search()->search($this->searchTerm(), [], ['per_page' => 1])->products[0]['id'] ?? null);
+        if (! is_string($itemId)) {
+            $this->markTestSkipped('No item to look up.');
+        }
+
+        $item = $this->optionalFeature('Product details', fn () => app(ProductDetailsService::class)->getItem($itemId));
+
+        $this->assertSame($itemId, $item['id'] ?? null);
     }
 
     public function test_recommendation_pod(): void

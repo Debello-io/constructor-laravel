@@ -142,7 +142,7 @@ For every storefront call, the package adds these values for the current shopper
 | `s` | Session number (an integer) | `ConstructorioID_session_id` cookie |
 | `ui` | Your user ID, **only for signed-in shoppers** | `auth()->id()`, or your resolver |
 | `c` | Integration identifier | `CONSTRUCTOR_CLIENT_IDENTIFIER` |
-| `_dt` | Request timestamp in milliseconds | Generated |
+| `_dt` | Request timestamp in milliseconds | Generated. Left out for the endpoints that reject it (category tree, facets, collections, image search). |
 | `origin_referrer` | The page the shopper is on, **without its query string** | The current URL for page requests; the `Referer` header for AJAX/fetch calls |
 
 And these headers:

@@ -13,7 +13,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - `searchByImage()` for Image Search (`POST /v2/image_search` on `image-search.cnstrc.com`): pass an uploaded file, a trusted `SplFileInfo` or the image bytes; JPEG, PNG, WebP or GIF up to 6 MB, checked from the contents before sending. Supports `use_segmentation`, `return_segments` and `search_crop_type`.
 - `filterImageResults()` to filter, sort and page image matches through `/browse/items`, as Constructor recommends.
 - `image_search_base_url` setting (`CONSTRUCTOR_IMAGE_SEARCH_BASE_URL`).
-- `ApiClient::postStorefront()` for storefront endpoints that take a raw request body.
+- `ApiClient::postStorefrontBody()` for storefront endpoints that take a raw request body (image search). Retried like a GET, because the endpoint only reads.
 - Artisan commands: `constructor:verify` (checks configuration and credentials without printing secrets), `constructor:upload` (catalog files, with `--wait`) and `constructor:task` (a task's status, with `--wait`).
 - Product details: `Constructor::productDetails()` with `getItem()`, `getItems()` (up to 20) and `getVariations()` (up to 100), returning enriched attributes and badges from `product-details.cnstrc.com`.
 - Shopper preferences: `Constructor::preferences()` with `setForCurrentUser()` (respects consent and the storefront `ui`), `setUserPreference()`, `setPreferences()` (100 per request) and `uploadPreferencesFile()` for the User profile API.
@@ -21,7 +21,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Blade components that render the beacon's tracking markup: `<x-constructor::search-results>`, `browse-results`, `tracking-data`, `item`, `recommendations`, `recommendation-item`, `quiz-results`, `product-detail`, `generic-results` and `button`. They write every documented `data-cnstrc-*` attribute, escaped, and add the `cnstrc-data` script tag on search and browse pages (only when Constructor returned the results). Views can be published with `--tag=constructor-views`.
 - Merchandising configuration from code: `Constructor::configuration()` with `redirectRules()`, `synonymGroups()`, `oneWaySynonyms()`, `sortOptions()`, `facets()`, `facetOptions()` and `refinedQueries()` (searchandising rules for search). Each uses the same `list()` / `get()` / `create()` / `replace()` / `update()` / `delete()` methods, splits bulk writes to Constructor's limits, and validates IDs and names before sending.
 - Agent Insights (`Constructor::insights()`): `searchOverview()`, `chat()`, `answerQuestion()`, `recommendations()` and `refineListing()` for the five `/v1/agent_insights/*` modes, each with a `*Streaming()` twin, returning the new `AgentInsight` DTO. Declined inputs (HTTP 422) come back as `isDeclined()`, not errors.
-- `ApiClient::postStorefront()`, and an optional JSON body on `openStorefrontStream()` (POST streams). Neither is retried.
+- `ApiClient::postStorefrontJson()`, and an optional JSON body on `openStorefrontStream()` (POST streams). Neither is retried: a repeat would add a second turn to the shopper's thread.
+
+### Fixed
+- `getBrowseGroups()`, `getAvailableFacets()`, `getFacetsWithOptions()`, `getFacetValuesWithImages()` and `getCollections()` failed with a 400 on every call, so they logged a warning and returned nothing. Those endpoints reject the `_dt` timestamp, which 2.0.0 sent on every storefront request. Image search likewise rejects `_dt` and `origin_referrer`. Neither is sent to these endpoints any more. Found by the new live smoke tests.
 
 ### Changed
 - The SSE reading loop moved from `AgentService` into the shared `Concerns\ReadsEventStreams` trait. Behaviour is unchanged.
