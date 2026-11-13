@@ -82,22 +82,54 @@ class ApiClient
     }
 
     /**
+     * POST a JSON body to a storefront endpoint and return the decoded JSON.
+     *
+     * Used by Agent Insights, whose requests are reads but carry a body.
+     * Never retried: a repeated request would add a second turn to the
+     * shopper's conversation thread.
+     *
+     * @param  array<string, mixed>  $query  Endpoint parameters. Shopper identity is added for you.
+     * @param  array<string, mixed>  $identity  Overrides for client_id / session_id / user_id / origin_referrer.
+     * @param  array<string, mixed>  $body  Sent as JSON.
+     * @param  int|null  $timeout  Seconds; defaults to `timeout`.
+     * @return array<string, mixed>
+     */
+    public function postStorefront(string $path, array $query, array $identity, array $body, string $baseUrl, ?int $timeout = null): array
+    {
+        $url = $this->storefrontUrl($baseUrl, $path, $query, $identity);
+
+        return $this->send(
+            fn () => $this->storefrontRequest(retry: false)
+                ->acceptJson()
+                ->timeout($timeout ?? $this->config->timeout)
+                ->post($url, $body),
+            $url,
+        );
+    }
+
+    /**
      * Open a Server-Sent Events stream on a storefront endpoint.
      *
      * The response body is returned unread so the caller can parse events as
      * they arrive. `stream_timeout` bounds connecting and each read; the
      * caller enforces the total duration.
      *
+     * With a $json body the stream is opened with a POST (Agent Insights),
+     * which is never retried; otherwise with a GET.
+     *
+     * @param  array<string, mixed>|null  $json
+     *
      * @throws ConnectionException|ApiException
      */
-    public function openStorefrontStream(#[SensitiveParameter] string $url): StreamInterface
+    public function openStorefrontStream(#[SensitiveParameter] string $url, ?array $json = null): StreamInterface
     {
         try {
-            $response = $this->storefrontRequest()
+            $request = $this->storefrontRequest(retry: $json === null)
                 ->accept('text/event-stream')
                 ->timeout($this->config->streamTimeout)
-                ->withOptions(['stream' => true])
-                ->get($url);
+                ->withOptions(['stream' => true]);
+
+            $response = $json === null ? $request->get($url) : $request->post($url, $json);
         } catch (HttpConnectionException $e) {
             throw ConnectionException::fromHttpClient($e, $url);
         }
@@ -277,11 +309,11 @@ class ApiClient
     /**
      * A pending request with timeouts, retries and backend-integration headers.
      */
-    private function storefrontRequest(): PendingRequest
+    private function storefrontRequest(bool $retry = true): PendingRequest
     {
         $this->warnIfBackendTokenMissing();
 
-        return $this->baseRequest()->withHeaders($this->context->headers());
+        return $this->baseRequest($retry)->withHeaders($this->context->headers());
     }
 
     /**

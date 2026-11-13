@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+- Agent Insights (`Constructor::insights()`): `searchOverview()`, `chat()`, `answerQuestion()`, `recommendations()` and `refineListing()` for the five `/v1/agent_insights/*` modes, each with a `*Streaming()` twin, returning the new `AgentInsight` DTO. Declined inputs (HTTP 422) come back as `isDeclined()`, not errors.
+- `ApiClient::postStorefront()`, and an optional JSON body on `openStorefrontStream()` (POST streams). Neither is retried.
+
+### Changed
+- The SSE reading loop moved from `AgentService` into the shared `Concerns\ReadsEventStreams` trait. Behaviour is unchanged.
+
 ## [2.0.0] - 2026-11-13
 
 A full review against Constructor's API reference and backend-integration documentation. See [UPGRADE.md](UPGRADE.md).

@@ -292,6 +292,33 @@ $answer['follow_up_questions'];
 $answer['item_results'];                                       // related products
 ```
 
+### Agent Insights
+
+AI answers placed inside the normal shopping journey. Every mode returns an `AgentInsight` with the same shape:
+
+```php
+$insights = Constructor::insights();
+
+// An AI overview above the search results (the index's searchbar domain)
+$overview = $insights->searchOverview('smoker for a small patio', ['page_context' => ['page_type' => 'plp']]);
+if ($overview->hasContent()) {
+    $overview->message;      $overview->products();
+}
+$overview->isDeclined();     // Constructor judged traditional search better (HTTP 422): show your results
+
+// A chat turn (CONSTRUCTOR_AGENT_DOMAIN, or pass 'domain')
+$reply = $insights->chat('Electric instead', ['thread_id' => $previous->threadId]);
+
+// A product answer, a curated recommendation set, and listing refinement chips
+$answer = $insights->answerQuestion('Does it fit a 20 lb tank?', 'WEB-SPIRIT-E325');
+$set = $insights->recommendations('WEB-SPIRIT-E325', 'complementary_pod');
+$refined = $insights->refineListing(['search_term' => 'grill'], 'under $500');
+$refined->followUpChoices();     // [['label' => 'Pellet', 'filter' => [...]], ...]
+$refined->refinedListing();      // send back as the listing next time
+```
+
+`searchOverview()`, `recommendations()` and `refineListing()` decorate a page, so they log failures and return an empty result; `chat()` and `answerQuestion()` throw. Each method has a `*Streaming()` twin that passes Constructor's events to a callback as they arrive. See [Agent insights](https://docs.constructor.com/reference/v1-asa-retrieve-agent-insights-chat).
+
 ### Quizzes
 
 Guided product finders built in the Constructor dashboard. Pass every answer so far, plus the session and version IDs from the first response:
@@ -436,8 +463,8 @@ Requires Laravel Scout 11. The item ID is the model's Scout key. Without `Constr
 
 | Call | On failure |
 |---|---|
-| Search, browse, autocomplete, recommendations, facets, groups, collections, quizzes | Logs a warning and returns an empty result (for `getNextQuestion()`, a step where `isAvailable()` is false), so a page still renders. Set `CONSTRUCTOR_THROW_EXCEPTIONS=true` to throw instead. |
-| AI agents, catalog management, offline behavioral actions, Scout indexing | Throws. |
+| Search, browse, autocomplete, recommendations, facets, groups, collections, quizzes, Agent Insights overviews, recommendation sets and listing refinements | Logs a warning and returns an empty result (for `getNextQuestion()`, a step where `isAvailable()` is false), so a page still renders. Set `CONSTRUCTOR_THROW_EXCEPTIONS=true` to throw instead. |
+| AI agents (incl. Agent Insights `chat()` and `answerQuestion()`), catalog management, offline behavioral actions, Scout indexing | Throws. |
 | Missing API key, token or agent domain | Always throws `ConfigurationException`. |
 
 Every exception extends `ConstructorIO\Laravel\Exceptions\ConstructorException`:

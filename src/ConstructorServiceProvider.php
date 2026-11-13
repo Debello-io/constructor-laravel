@@ -13,6 +13,7 @@ use ConstructorIO\Laravel\Services\CatalogBatchingService;
 use ConstructorIO\Laravel\Services\CatalogService;
 use ConstructorIO\Laravel\Services\ConstructorAgentService;
 use ConstructorIO\Laravel\Services\ConstructorService;
+use ConstructorIO\Laravel\Services\InsightsService;
 use ConstructorIO\Laravel\Services\QuizService;
 use ConstructorIO\Laravel\Services\RecommendationService;
 use ConstructorIO\Laravel\Services\Search\ConstructorSandboxSearch;
@@ -50,6 +51,7 @@ class ConstructorServiceProvider extends ServiceProvider
         $this->app->singleton(AgentService::class);
         $this->app->singleton(CatalogService::class);
         $this->app->singleton(CatalogBatchingService::class);
+        $this->app->singleton(InsightsService::class);
         $this->app->singleton(QuizService::class);
         $this->app->singleton(BehaviorService::class);
         $this->app->singleton(Constructor::class);
