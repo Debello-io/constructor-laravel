@@ -11,6 +11,8 @@ use ConstructorIO\Laravel\Services\AgentService;
 use ConstructorIO\Laravel\Services\BehaviorService;
 use ConstructorIO\Laravel\Services\CatalogBatchingService;
 use ConstructorIO\Laravel\Services\CatalogService;
+use ConstructorIO\Laravel\Services\Configuration;
+use ConstructorIO\Laravel\Services\ConfigurationService;
 use ConstructorIO\Laravel\Services\ConstructorAgentService;
 use ConstructorIO\Laravel\Services\ConstructorService;
 use ConstructorIO\Laravel\Services\QuizService;
@@ -31,6 +33,17 @@ use Laravel\Scout\Engines\Engine;
  */
 class ConstructorServiceProvider extends ServiceProvider
 {
+    /** The configuration API's resource services, behind Constructor::configuration(). */
+    public const CONFIGURATION_RESOURCES = [
+        Configuration\RedirectRuleService::class,
+        Configuration\SynonymGroupService::class,
+        Configuration\OneWaySynonymService::class,
+        Configuration\SortOptionService::class,
+        Configuration\FacetConfigurationService::class,
+        Configuration\FacetOptionService::class,
+        Configuration\RefinedQueryService::class,
+    ];
+
     public function register(): void
     {
         $this->mergeConfigFrom(__DIR__.'/../config/constructor.php', 'constructor');
@@ -52,6 +65,10 @@ class ConstructorServiceProvider extends ServiceProvider
         $this->app->singleton(CatalogBatchingService::class);
         $this->app->singleton(QuizService::class);
         $this->app->singleton(BehaviorService::class);
+        $this->app->singleton(ConfigurationService::class);
+        foreach (self::CONFIGURATION_RESOURCES as $resource) {
+            $this->app->singleton($resource);
+        }
         $this->app->singleton(Constructor::class);
 
         $this->app->alias(Constructor::class, SearchProvider::class);

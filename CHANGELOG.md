@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+- Merchandising configuration from code: `Constructor::configuration()` with `redirectRules()`, `synonymGroups()`, `oneWaySynonyms()`, `sortOptions()`, `facets()`, `facetOptions()` and `refinedQueries()` (searchandising rules for search). Each uses the same `list()` / `get()` / `create()` / `replace()` / `update()` / `delete()` methods, splits bulk writes to Constructor's limits, and validates IDs and names before sending.
+
 ## [2.0.0] - 2026-11-13
 
 A full review against Constructor's API reference and backend-integration documentation. See [UPGRADE.md](UPGRADE.md).

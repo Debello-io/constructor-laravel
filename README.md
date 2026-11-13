@@ -56,7 +56,7 @@ CONSTRUCTOR_AGENT_DOMAIN=your-agent-domain
 | Credential | Used for | Sent as |
 |---|---|---|
 | API key | Every request | `key` query parameter |
-| API token | Catalog management and offline behavioral actions only | HTTP Basic username |
+| API token | Catalog management, merchandising configuration and offline behavioral actions only | HTTP Basic username |
 | Backend token | Storefront and agent requests | `x-cnstrc-token` header |
 
 See [Authentication](https://docs.constructor.com/reference/main-authentication) and [Required parameters](https://docs.constructor.com/docs/integrating-with-constructor-direct-api-integration-required-parameters).
@@ -389,6 +389,27 @@ Constructor::behavior()->recordOfflineReturns([[
 ```
 
 Actions are validated before anything is sent and posted in batches of 100 (Constructor's limit); writes are never retried. See [Offline behavioral actions](https://docs.constructor.com/reference/v1-offline-behavioral-actions-create-actions).
+
+### Merchandising configuration
+
+Manage redirect rules, synonyms, sort options, facets and searchandising rules from code, for example to keep them in version control or sync them from your PIM. Requires `CONSTRUCTOR_API_TOKEN`.
+
+```php
+$config = Constructor::configuration();
+
+$config->redirectRules()->create(['url' => '/gift-cards', 'matches' => [['pattern' => 'gift card', 'match_type' => 'PHRASE']]]);
+$config->synonymGroups()->create(['bbq', 'barbecue']);
+$config->oneWaySynonyms()->create('smoker', ['pellet grill', 'offset smoker']);
+$config->sortOptions()->create(['sort_by' => 'price', 'sort_order' => 'ascending', 'path_in_metadata' => 'data.price', 'display_name' => 'Price: Low to High']);
+$config->facets()->update('brand', ['display_name' => 'Brand', 'sort_order' => 'value']);
+$config->facetOptions()->updateMany('brand', [['value' => 'weber', 'display_name' => 'Weber']]);
+$config->refinedQueries()->create([
+    'query' => 'smoker',
+    'slot_rules' => [['rule' => ['item_id' => 'TRG-780', 'position' => 1]]],   // pin to the top
+]);
+```
+
+Every resource uses the same method names where the API allows: `list()`, `get()` (null if not found), `create()`, `replace()`, `update()` and `delete()`. Bulk writes are split to Constructor's per-request limits. Calls throw on failure; reads are retried, writes never are. See [Configuration](https://docs.constructor.com/reference/configuration-facets) and [Searchandising](https://docs.constructor.com/reference/v1-searchandising-create-refined-query).
 
 ### Laravel Scout
 

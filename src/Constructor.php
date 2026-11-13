@@ -12,6 +12,7 @@ use ConstructorIO\Laravel\Services\AgentService;
 use ConstructorIO\Laravel\Services\BehaviorService;
 use ConstructorIO\Laravel\Services\CatalogBatchingService;
 use ConstructorIO\Laravel\Services\CatalogService;
+use ConstructorIO\Laravel\Services\ConfigurationService;
 use ConstructorIO\Laravel\Services\QuizService;
 use ConstructorIO\Laravel\Services\RecommendationService;
 use ConstructorIO\Laravel\Services\SearchService;
@@ -31,6 +32,7 @@ use Illuminate\Http\Request;
  *     Constructor::catalog()->uploadCatalog(storage_path('catalog/items.jsonl'));
  *     Constructor::quizzes()->getNextQuestion('grill-finder');
  *     Constructor::behavior()->recordOfflinePurchases($storeSales);
+ *     Constructor::configuration()->synonymGroups()->create(['bbq', 'barbecue']);
  *
  * Each method here only delegates, so its full documentation lives on the
  * service it calls.
@@ -45,6 +47,7 @@ class Constructor implements SearchProvider
         protected readonly CatalogBatchingService $catalogBatching,
         protected readonly QuizService $quizzes,
         protected readonly BehaviorService $behavior,
+        protected readonly ConfigurationService $configuration,
     ) {}
 
     /*
@@ -103,6 +106,15 @@ class Constructor implements SearchProvider
     public function behavior(): BehaviorService
     {
         return $this->behavior;
+    }
+
+    /**
+     * Merchandising configuration: redirect rules, synonyms, sort options,
+     * facets and searchandising rules. Requires CONSTRUCTOR_API_TOKEN.
+     */
+    public function configuration(): ConfigurationService
+    {
+        return $this->configuration;
     }
 
     /*
