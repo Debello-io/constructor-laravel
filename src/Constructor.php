@@ -198,9 +198,13 @@ class Constructor implements SearchProvider
         return $this->search->getFacetsWithOptions($options);
     }
 
-    public function getFacetValuesWithImages(string $facetName, int $maxItems = 10): array
+    /**
+     * @param  array<string, mixed>  $options  cache (false skips the response cache)
+     * @return list<array{value: string, display_name: string, count: int, image: string|null}>
+     */
+    public function getFacetValuesWithImages(string $facetName, int $maxItems = 10, array $options = []): array
     {
-        return $this->search->getFacetValuesWithImages($facetName, $maxItems);
+        return $this->search->getFacetValuesWithImages($facetName, $maxItems, $options);
     }
 
     public function getBrowseGroups(array $options = []): array
@@ -213,9 +217,22 @@ class Constructor implements SearchProvider
         return $this->search->getCollections($options);
     }
 
-    public function getCollection(string $collectionId): ?array
+    /**
+     * @param  array<string, mixed>  $options  cache (false skips the response cache)
+     * @return array<string, mixed>|null
+     */
+    public function getCollection(string $collectionId, array $options = []): ?array
     {
-        return $this->search->getCollection($collectionId);
+        return $this->search->getCollection($collectionId, $options);
+    }
+
+    /**
+     * Make every cached category tree, facet list and collection stale, e.g.
+     * after changing them in the dashboard. See the `cache` settings.
+     */
+    public function flushCache(): void
+    {
+        $this->search->flushCache();
     }
 
     public function browseCollection(string $collectionId, array $filters = [], array $options = []): SearchResults

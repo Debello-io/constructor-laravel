@@ -24,6 +24,14 @@ use Illuminate\Support\Facades\Log;
 trait HandlesStorefrontFailures
 {
     /**
+     * How many times attempt() has returned its fallback on this instance.
+     * CachesResponses compares it before and after a call to avoid caching a
+     * result that hides a failure. Only the difference matters, so it never
+     * needs resetting (safe on Octane).
+     */
+    private int $fallbacksServed = 0;
+
+    /**
      * @template T
      *
      * @param  string  $operation  Short name for the log, e.g. "search".
@@ -49,7 +57,14 @@ trait HandlesStorefrontFailures
                 'status' => $e instanceof ApiException ? $e->getStatusCode() : null,
             ]);
 
+            $this->fallbacksServed++;
+
             return $fallback();
         }
+    }
+
+    protected function fallbacksServed(): int
+    {
+        return $this->fallbacksServed;
     }
 }

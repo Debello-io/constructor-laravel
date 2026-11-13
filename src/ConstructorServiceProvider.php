@@ -19,6 +19,7 @@ use ConstructorIO\Laravel\Services\Search\ConstructorSandboxSearch;
 use ConstructorIO\Laravel\Services\SearchService;
 use ConstructorIO\Laravel\Support\ConstructorConfig;
 use ConstructorIO\Laravel\Support\RequestContext;
+use ConstructorIO\Laravel\Support\ResponseCache;
 use Illuminate\Contracts\Foundation\Application;
 use Illuminate\Cookie\Middleware\EncryptCookies;
 use Illuminate\Support\ServiceProvider;
@@ -45,6 +46,7 @@ class ConstructorServiceProvider extends ServiceProvider
 
         $this->app->singleton(RequestContext::class);
         $this->app->singleton(ApiClient::class);
+        $this->app->singleton(ResponseCache::class);
         $this->app->singleton(SearchService::class);
         $this->app->singleton(RecommendationService::class);
         $this->app->singleton(AgentService::class);

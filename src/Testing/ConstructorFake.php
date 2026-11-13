@@ -298,7 +298,7 @@ class ConstructorFake extends Constructor
         return $this->record(__FUNCTION__, func_get_args());
     }
 
-    public function getFacetValuesWithImages(string $facetName, int $maxItems = 10): array
+    public function getFacetValuesWithImages(string $facetName, int $maxItems = 10, array $options = []): array
     {
         return $this->record(__FUNCTION__, func_get_args());
     }
@@ -313,9 +313,14 @@ class ConstructorFake extends Constructor
         return $this->record(__FUNCTION__, func_get_args());
     }
 
-    public function getCollection(string $collectionId): ?array
+    public function getCollection(string $collectionId, array $options = []): ?array
     {
         return $this->record(__FUNCTION__, func_get_args());
+    }
+
+    public function flushCache(): void
+    {
+        $this->record(__FUNCTION__, func_get_args());
     }
 
     public function browseCollection(string $collectionId, array $filters = [], array $options = []): SearchResults
