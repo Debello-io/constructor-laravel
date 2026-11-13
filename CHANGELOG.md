@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+- Blade components that render the beacon's tracking markup: `<x-constructor::search-results>`, `browse-results`, `tracking-data`, `item`, `recommendations`, `recommendation-item`, `quiz-results`, `product-detail`, `generic-results` and `button`. They write every documented `data-cnstrc-*` attribute, escaped, and add the `cnstrc-data` script tag on search and browse pages (only when Constructor returned the results). Views can be published with `--tag=constructor-views`.
+
 ## [2.0.0] - 2026-11-13
 
 A full review against Constructor's API reference and backend-integration documentation. See [UPGRADE.md](UPGRADE.md).
