@@ -42,6 +42,8 @@ A full review against Constructor's API reference and backend-integration docume
 - Test suite (PHPUnit + Testbench), Pint, Larastan and GitHub Actions CI.
 - `AGENTS.md`, `CLAUDE.md`, the Constructor docs MCP server, Claude Code skills, a review subagent, CONTRIBUTING and SECURITY.
 - Laravel 13 support. The Scout engine requires Scout 11.
+- Quizzes: `Constructor::quizzes()` (`QuizService`) with `getNextQuestion()`, `getResults()` and `getResultsConfig()`, returning the new `QuizQuestion` and `QuizResults` DTOs. New `quizzes_base_url` setting (`CONSTRUCTOR_QUIZZES_BASE_URL`).
+- Offline behavioral actions: `Constructor::behavior()` (`BehaviorService`) with `recordOfflinePurchases()`, `recordOfflineReturns()` and `recordOfflineActions()`, validated locally and sent in batches of 100.
 
 ### Changed
 - Package renamed to `debello-io/constructor-laravel`.

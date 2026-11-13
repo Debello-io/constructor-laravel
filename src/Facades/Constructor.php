@@ -37,6 +37,8 @@ use Illuminate\Support\Facades\Facade;
  * @method static \ConstructorIO\Laravel\Services\RecommendationService recommendations()
  * @method static \ConstructorIO\Laravel\Services\AgentService agent()
  * @method static \ConstructorIO\Laravel\Services\CatalogService catalog()
+ * @method static \ConstructorIO\Laravel\Services\QuizService quizzes()
+ * @method static \ConstructorIO\Laravel\Services\BehaviorService behavior()
  * @method static void resolveUserIdUsing(\Closure|null $resolver)
  * @method static void resolveConsentUsing(\Closure|null $resolver)
  * @method static bool supportsZeroState()

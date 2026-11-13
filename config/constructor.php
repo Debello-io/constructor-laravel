@@ -26,7 +26,8 @@ return [
     |
     | api_token      Secret. Created in the dashboard under Integration >
     |                API Integration. Used ONLY for catalog management
-    |                (uploads, items, tasks). Sent with HTTP Basic auth.
+    |                (uploads, items, tasks) and offline behavioral actions.
+    |                Sent with HTTP Basic auth.
     |
     | backend_token  Secret. The "security token" Constructor gives you for a
     |                backend integration. Sent as the `x-cnstrc-token` header
@@ -68,12 +69,22 @@ return [
     |--------------------------------------------------------------------------
     |
     | Only change these if your Constructor contact gives you different hosts.
+    | Every host must be https (plain http is only accepted for localhost).
+    |
+    | search_base_url   Search, browse, autocomplete, recommendations,
+    |                   catalog management and offline behavioral actions.
+    | agent_base_url    AI Shopping Agent and Product Insights Agent.
+    | quizzes_base_url  Quizzes (next question and results).
+    |
+    | @see https://docs.constructor.com/reference/v1-quizzes-get-next-question
     |
     */
 
     'search_base_url' => env('CONSTRUCTOR_SEARCH_BASE_URL', 'https://ac.cnstrc.com'),
 
     'agent_base_url' => env('CONSTRUCTOR_AGENT_BASE_URL', 'https://agent.cnstrc.com'),
+
+    'quizzes_base_url' => env('CONSTRUCTOR_QUIZZES_BASE_URL', 'https://quizzes.cnstrc.com'),
 
     /*
     |--------------------------------------------------------------------------

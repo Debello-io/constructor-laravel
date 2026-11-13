@@ -48,6 +48,7 @@ final class ConstructorConfig
         public readonly int $taskTimeout,
         public readonly int $catalogBatchSize,
         public readonly string $scoutSyncMode,
+        public readonly string $quizzesBaseUrl = 'https://quizzes.cnstrc.com',
     ) {}
 
     /**
@@ -89,6 +90,7 @@ final class ConstructorConfig
                 $config['catalog']['batch_size'] ?? $config['scout']['batch_size'] ?? 1000
             ))),
             scoutSyncMode: ($config['scout']['sync_mode'] ?? 'replace') === 'patch' ? 'patch' : 'replace',
+            quizzesBaseUrl: self::secureUrl('quizzes_base_url', $config['quizzes_base_url'] ?? 'https://quizzes.cnstrc.com'),
         );
     }
 
