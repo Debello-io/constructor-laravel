@@ -3,38 +3,29 @@
 namespace ConstructorIO\Laravel\DataTransferObjects;
 
 /**
- * Data Transfer Object for recommendation results from any search provider.
+ * Results from getRecommendations() and getItemRecommendations().
  *
- * This DTO provides a consistent structure for recommendation results regardless
- * of which search backend (Meilisearch, Constructor, Algolia) is used.
+ *     $recommendations = Constructor::getItemRecommendations('pdp-complementary', 'GRILL-123');
  *
- * @example
- * // Get recommendations for a product page
- * $recommendations = $search->getItemRecommendations('pdp-similar', 'PRODUCT-123');
- *
- * if ($recommendations->hasRecommendations()) {
- *     echo "<h2>{$recommendations->title}</h2>";
- *     foreach ($recommendations->products as $product) {
- *         echo $product['name'];
- *         echo $product['price'];
+ *     if ($recommendations->hasRecommendations()) {
+ *         echo $recommendations->title;        // Pod display name from the dashboard
+ *         foreach ($recommendations->products as $product) {
+ *             echo $product['name'];
+ *         }
  *     }
- * }
  *
- * // Home page recommendations
- * $featured = $search->getRecommendations('home-bestsellers');
- * echo "Showing {$featured->count()} of {$featured->total} products";
- *
- * // JSON serialization
- * return response()->json($recommendations->toArray());
+ * Pass $recommendations->resultId to the page so the beacon can attribute
+ * recommendation views and clicks.
  */
 class RecommendationResults
 {
     /**
-     * @param string $podId The recommendation pod ID
-     * @param string $title The display title of the recommendation pod
-     * @param array $products Array of recommended products
-     * @param int $total Total number of recommendations available
-     * @param array $metadata Provider-specific metadata
+     * @param  string  $podId  The pod that was requested.
+     * @param  string  $title  The pod's display name.
+     * @param  list<array<string, mixed>>  $products  Recommended products (see ResultTransformer::product()).
+     * @param  int  $total  Total recommendations available.
+     * @param  array<string, mixed>  $metadata  request_id, result_id, the full pod object and experiments.
+     * @param  string|null  $resultId  Constructor's ID for this response, needed for tracking.
      */
     public function __construct(
         public readonly string $podId,
@@ -42,26 +33,21 @@ class RecommendationResults
         public readonly array $products,
         public readonly int $total = 0,
         public readonly array $metadata = [],
+        public readonly ?string $resultId = null,
     ) {}
 
-    /**
-     * Check if there are any recommendations.
-     */
     public function isEmpty(): bool
     {
-        return empty($this->products);
+        return $this->products === [];
     }
 
-    /**
-     * Check if there are recommendations (inverse of isEmpty for semantic clarity).
-     */
     public function hasRecommendations(): bool
     {
-        return !$this->isEmpty();
+        return ! $this->isEmpty();
     }
 
     /**
-     * Get the number of recommendations.
+     * Number of products returned.
      */
     public function count(): int
     {
@@ -69,15 +55,7 @@ class RecommendationResults
     }
 
     /**
-     * Get all results as an array for JSON serialization.
-     *
-     * @return array{
-     *     pod_id: string,
-     *     title: string,
-     *     products: array,
-     *     total: int,
-     *     metadata: array
-     * }
+     * @return array{pod_id: string, title: string, products: list<array<string, mixed>>, total: int, metadata: array<string, mixed>, result_id: string|null}
      */
     public function toArray(): array
     {
@@ -87,19 +65,12 @@ class RecommendationResults
             'products' => $this->products,
             'total' => $this->total,
             'metadata' => $this->metadata,
+            'result_id' => $this->resultId,
         ];
     }
 
-    /**
-     * Create an empty RecommendationResults instance.
-     */
     public static function empty(string $podId = '', string $title = ''): self
     {
-        return new self(
-            podId: $podId,
-            title: $title,
-            products: [],
-            total: 0,
-        );
+        return new self(podId: $podId, title: $title, products: []);
     }
 }

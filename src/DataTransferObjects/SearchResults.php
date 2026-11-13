@@ -3,46 +3,46 @@
 namespace ConstructorIO\Laravel\DataTransferObjects;
 
 /**
- * Data Transfer Object for search results from any search provider.
+ * Results from search(), browse(), browseItems() and browseCollection().
  *
- * This DTO provides a consistent structure for search results regardless
- * of which search backend (Meilisearch, Constructor, Algolia) is used.
+ *     $results = Constructor::search('pellet grill');
  *
- * @example
- * // Basic usage
- * $results = $search->search('shoes');
- * foreach ($results->products as $product) {
- *     echo $product['name'];
- *     echo $product['price'];
- * }
- *
- * // Pagination
- * echo "Page {$results->page} of {$results->totalPages()}";
- * if ($results->hasMore()) {
- *     $nextPage = $results->nextPageNumber();
- * }
- *
- * // Access facets for filtering UI
- * foreach ($results->facets as $facetName => $facetData) {
- *     echo $facetData['name']; // Display name
- *     foreach ($facetData['values'] as $value => $count) {
- *         echo "{$value} ({$count})";
+ *     if ($results->isRedirect()) {
+ *         return redirect($results->redirectUrl());
  *     }
- * }
  *
- * // JSON serialization
- * return response()->json($results->toArray());
+ *     foreach ($results->products as $product) {
+ *         echo $product['name'], ' ', $product['price'];
+ *     }
+ *
+ *     echo "Page {$results->page} of {$results->totalPages()}";
+ *
+ * Pass $results->resultId to the page (data-cnstrc-result-id) so the beacon's
+ * "results loaded" event can be attributed to this response.
+ *
+ * @see https://docs.constructor.com/reference/constructor-concepts-results-response-structure
  */
 class SearchResults
 {
     /**
-     * @param array $products Array of product data
-     * @param int $total Total number of matching results
-     * @param int $page Current page number (1-indexed)
-     * @param int $perPage Number of results per page
-     * @param array $facets Available facets/filters with counts
-     * @param array $metadata Provider-specific metadata
-     * @param array $groups Category groups with hierarchy (for browse responses)
+     * Constructor reports at most this many total results. Show "10,000+"
+     * when total reaches it.
+     */
+    public const MAX_REPORTED_TOTAL = 10000;
+
+    /**
+     * @param  list<array<string, mixed>>  $products  Normalised products (see ResultTransformer::product()).
+     * @param  int  $total  Total matching results across all pages.
+     * @param  int  $page  Current page, starting at 1.
+     * @param  int  $perPage  Results per page.
+     * @param  array<string, array<string, mixed>>  $facets  Facets keyed by name (see ResultTransformer::facets()).
+     * @param  array<string, mixed>  $metadata  request_id, result_id and other response details.
+     * @param  list<array<string, mixed>>  $groups  Category tree for the results.
+     * @param  string|null  $resultId  Constructor's ID for this response, needed for tracking.
+     * @param  array<string, mixed>|null  $redirect  Set when a merchandising redirect rule matched: ['url' => ..., 'rule_id' => ..., 'matched_terms' => [...]].
+     * @param  list<array<string, mixed>>  $sortOptions  Sort options configured in the dashboard.
+     * @param  list<array<string, mixed>>  $refinedContent  Content rules (banners, messages) that matched.
+     * @param  list<string>  $relatedSearches  Related search terms, when enabled.
      */
     public function __construct(
         public readonly array $products,
@@ -52,19 +52,32 @@ class SearchResults
         public readonly array $facets = [],
         public readonly array $metadata = [],
         public readonly array $groups = [],
+        public readonly ?string $resultId = null,
+        public readonly ?array $redirect = null,
+        public readonly array $sortOptions = [],
+        public readonly array $refinedContent = [],
+        public readonly array $relatedSearches = [],
     ) {}
 
     /**
-     * Check if there are more results available.
+     * True when Constructor says to send the shopper to another URL instead
+     * of showing results (a redirect rule set up in the dashboard).
      */
+    public function isRedirect(): bool
+    {
+        return $this->redirectUrl() !== null;
+    }
+
+    public function redirectUrl(): ?string
+    {
+        return $this->redirect['url'] ?? null;
+    }
+
     public function hasMore(): bool
     {
         return ($this->page * $this->perPage) < $this->total;
     }
 
-    /**
-     * Get the total number of pages.
-     */
     public function totalPages(): int
     {
         if ($this->perPage <= 0) {
@@ -74,16 +87,13 @@ class SearchResults
         return (int) ceil($this->total / $this->perPage);
     }
 
-    /**
-     * Check if results are empty.
-     */
     public function isEmpty(): bool
     {
-        return empty($this->products);
+        return $this->products === [];
     }
 
     /**
-     * Get the number of results in this page.
+     * Number of products on this page.
      */
     public function count(): int
     {
@@ -91,9 +101,7 @@ class SearchResults
     }
 
     /**
-     * Get the offset (number of items before this page).
-     *
-     * Useful for displaying "Showing 25-48 of 156 results".
+     * Number of results before this page. For "Showing 25-48 of 156".
      */
     public function getOffset(): int
     {
@@ -101,7 +109,7 @@ class SearchResults
     }
 
     /**
-     * Get the next page number, or 0 if no more pages.
+     * The next page number, or 0 on the last page.
      */
     public function nextPageNumber(): int
     {
@@ -109,17 +117,15 @@ class SearchResults
     }
 
     /**
-     * Get all results as an array for JSON serialization.
-     *
-     * @return array{
-     *     products: array,
-     *     total: int,
-     *     page: int,
-     *     per_page: int,
-     *     facets: array,
-     *     groups: array,
-     *     metadata: array
-     * }
+     * True when Constructor capped the total (see MAX_REPORTED_TOTAL).
+     */
+    public function isTotalCapped(): bool
+    {
+        return $this->total >= self::MAX_REPORTED_TOTAL;
+    }
+
+    /**
+     * @return array<string, mixed>
      */
     public function toArray(): array
     {
@@ -131,19 +137,16 @@ class SearchResults
             'facets' => $this->facets,
             'groups' => $this->groups,
             'metadata' => $this->metadata,
+            'result_id' => $this->resultId,
+            'redirect' => $this->redirect,
+            'sort_options' => $this->sortOptions,
+            'refined_content' => $this->refinedContent,
+            'related_searches' => $this->relatedSearches,
         ];
     }
 
-    /**
-     * Create an empty SearchResults instance.
-     */
-    public static function empty(): self
+    public static function empty(int $page = 1, int $perPage = 24): self
     {
-        return new self(
-            products: [],
-            total: 0,
-            page: 1,
-            perPage: 24,
-        );
+        return new self(products: [], total: 0, page: $page, perPage: $perPage);
     }
 }

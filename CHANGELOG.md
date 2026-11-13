@@ -1,52 +1,78 @@
 # Changelog
 
-All notable changes to this project will be documented in this file.
+All notable changes to this project are documented in this file.
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [2.0.0] - Unreleased
+
+A full review against Constructor's API reference and backend-integration documentation. See [UPGRADE.md](UPGRADE.md).
+
+### Security
+- `x-cnstrc-token` is only ever the backend security token. 1.x fell back to sending the secret API token.
+- The Laravel session ID and IP-derived hashes are no longer sent to Constructor as `ui`.
+- Storefront code no longer uses the API token. Collections are read from public browse endpoints.
+- Every dynamic path segment is URL-encoded, so caller input can't change the endpoint or add query parameters on authenticated requests.
+- Logs no longer contain request parameters, shopper identifiers or response headers.
+- Beacon cookies are read from the request, not `$_COOKIE`, so they can't leak between requests on Octane.
+
+### Added
+- `Constructor` entry class: `Constructor::agent()`, `Constructor::catalog()`, `Constructor::recommendations()`, `Constructor::searchService()`.
+- `Constructor::resolveConsentUsing()` and `Constructor::resolveUserIdUsing()`.
+- Client ID cookie generation on a first visit. `s=1` when the session cookie is missing.
+- `browseItems()`, search redirects, `resultId` on every result DTO, sort options, refined content, related searches, range facets, hierarchical facets and full facet options.
+- Recommendation `term`, `filters`, `variation_id` and multiple `item_id`s.
+- Full AI Shopping Agent event support: `follow_up_refinement`, `server_error`, `article_reference`, `image_meta` and recipe events. Result IDs for tracking. `askProductQuestionStreaming()`.
+- Catalog: `variations_file`, JSONL `format`, `patch_delta`, `on_missing`, `mode`, `notification_email`. `upsertItems()`, `patchItems()`, `deleteItems()`, `getItem()`, `listItems()`, `verifyCredentials()`.
+- `Scout\ConstructorSearchable` interface for Scout models.
+- Typed exceptions under `ConstructorIO\Laravel\Exceptions`.
+- `throw_exceptions`, `log_channel`, `default_section`, `identity.*`, `stream_timeout`, `catalog.*` and `scout.batch_size` settings.
+- Test suite (PHPUnit + Testbench), Pint, Larastan and GitHub Actions CI.
+- `AGENTS.md`, `CLAUDE.md`, the Constructor docs MCP server, Claude Code skills, a review subagent, CONTRIBUTING and SECURITY.
+- Laravel 13 and Scout 11 support.
+
+### Changed
+- Package renamed to `debello-io/constructor-laravel`.
+- Search and autocomplete use the documented `/v1/search` and `/v1/autocomplete` endpoints.
+- Filters use `filters[name]=value`, range filters use `min-max`, and lists use repeated keys.
+- Catalog requests use HTTP Basic auth with the API token, as documented.
+- Retries only cover connection errors, 429 and 5xx, with exponential backoff.
+- The default client identifier is `cio-be-web-{app}`.
+- The Scout engine sends documented item payloads, respects pagination, delegates search to `SearchService` and throws on indexing failures.
+- Renamed: `ConstructorSandboxSearch` → `Constructor` / `SearchService`, `SandboxSearchContract` → `SearchProvider`, `ConstructorAgentService` → `AgentService`, `ConstructorService` → `CatalogService`, `Search\ConstructorEngine` → `Scout\ConstructorEngine`. The old names remain as deprecated aliases.
+
+### Fixed
+- Queries containing `/`, `?`, `#` or `%` hit the wrong endpoint.
+- `result_id` was always null for search and browse.
+- Recommendation pod titles were always empty.
+- Range filters and range facets didn't work.
+- Shopping Agent follow-up questions were never captured, and stream errors were ignored.
+- SSE parser state leaked between requests.
+- JSONL uploads were processed as CSV.
+- Task polling never finished for `CANCELED` tasks.
+- Scout paginated results always returned page 1, and 429s triggered unbounded recursion.
+- `getFirstProductImageFromCollection()` always returned null.
+
+### Removed
+- PHP 8.1 and Laravel 10 support.
+- `config/constructor-catalog.php`, which was unused, and `config/scout.php.example`.
+- `searchComplementaryProducts()`, a fashion-specific prompt. Use a `complementary_items` pod.
+- `ConstructorService::verify()` and `getCatalogInfo()`, which called undocumented endpoints.
+- `Traits\BackendRequestContext`, replaced by `Support\RequestContext`.
+
+## [1.3.0] - 2026-02-12
+
+### Added
+- Backend integration headers and query parameters for server-side API calls.
+
+## [1.2.0] - 2026-01-30
+
+### Added
+- Laravel 12 support.
 
 ## [1.0.0] - 2024-01-30
 
 ### Added
-- Initial release of Constructor.io Laravel integration
-- **Search Service** (`ConstructorSandboxSearch`)
-  - Full-text product search with filters, sorting, and pagination
-  - Category/facet browsing via `browse()` method
-  - Autocomplete with search suggestions and product previews
-  - Zero-state data (trending searches, popular products, top categories)
-  - Recommendations from pods (home page and item-based)
-  - Collection browsing and metadata
-  - Facet discovery and values with images
-  - Recipe search support
-- **AI Agent Service** (`ConstructorAgentService`)
-  - AI Shopping Agent for natural language product discovery
-  - Streaming support for real-time UI updates
-  - Product Insights Agent for product Q&A
-  - Complementary product search
-- **Catalog Service** (`ConstructorService`)
-  - Bulk catalog file uploads (CSV, JSONL)
-  - Task status monitoring with polling
-  - API credential verification
-- **Laravel Scout Integration** (`ConstructorEngine`)
-  - Full Scout engine implementation
-  - Model indexing and searching
-  - Facet support in search results
-- **Data Transfer Objects**
-  - `SearchResults` for search/browse responses
-  - `AutocompleteResults` for autocomplete/zero-state
-  - `RecommendationResults` for recommendation pods
-- **Supporting Files**
-  - `SandboxSearchContract` interface for swappable search backends
-  - `SearchResultCollection` for Scout results with metadata
-- **Configuration**
-  - `constructor.php` for API and agent settings
-  - `constructor-catalog.php` for catalog upload settings
-- **Facade** for convenient static access
-
-### Dependencies
-- PHP 8.1+
-- Laravel 10.x or 11.x
-- Guzzle HTTP 7.x
-- Optional: Laravel Scout 10.x for Scout integration
+- Initial release: search, browse, autocomplete, zero state, recommendations, collections, facets, recipes, AI Shopping Agent, Product Insights Agent, catalog uploads and a Scout engine.

@@ -3,54 +3,34 @@
 namespace ConstructorIO\Laravel\DataTransferObjects;
 
 /**
- * Data Transfer Object for autocomplete results from any search provider.
+ * Results from autocomplete() and getZeroStateData().
  *
- * This DTO provides a consistent structure for autocomplete suggestions
- * regardless of which search backend (Meilisearch, Constructor, Algolia) is used.
+ *     $results = Constructor::autocomplete('web');
  *
- * @example
- * // Autocomplete as user types
- * $results = $search->autocomplete('blu');
- *
- * // Show search suggestions
- * if ($results->hasSuggestions()) {
  *     foreach ($results->suggestions as $suggestion) {
- *         echo $suggestion['term']; // "blue shirt", "blue jeans"
+ *         echo $suggestion['term'];            // "weber grill"
  *     }
- * }
- *
- * // Show product previews
- * if ($results->hasProducts()) {
  *     foreach ($results->products as $product) {
- *         echo $product['name'];
- *         echo $product['image_url'];
+ *         echo $product['name'], $product['image_url'];
  *     }
- * }
  *
- * // Zero-state (search box focused but empty)
- * $zeroState = $search->getZeroStateData();
- * if ($zeroState->hasZeroStateData()) {
- *     foreach ($zeroState->topCategories as $category) {
- *         echo $category['name'];
- *     }
- *     foreach ($zeroState->popularProducts as $product) {
- *         echo $product['name'];
- *     }
- * }
+ *     // Search box focused but empty
+ *     $zeroState = Constructor::getZeroStateData(['recommendation_pod_id' => 'zero-state-bestsellers']);
  *
- * // JSON serialization
- * return response()->json($results->toArray());
+ *     return response()->json($results->toArray());
  */
 class AutocompleteResults
 {
     /**
-     * @param  array  $suggestions  Array of search term suggestions
-     * @param  array  $products  Array of product suggestions
-     * @param  array  $categories  Array of category suggestions
-     * @param  array  $trending  Array of trending searches (for zero-state)
-     * @param  array  $popularProducts  Array of popular products (for zero-state)
-     * @param  array  $topCategories  Array of top categories (for zero-state)
-     * @param  array  $metadata  Provider-specific metadata
+     * @param  list<array<string, mixed>>  $suggestions  Search terms: ['term' => ..., 'matched_terms' => [...], 'data' => [...]].
+     * @param  list<array<string, mixed>>  $products  Product previews (see ResultTransformer::product()).
+     * @param  list<array<string, mixed>>  $categories  Category suggestions: ['id', 'name', 'path', 'count'].
+     * @param  list<array<string, mixed>>  $trending  Trending searches (zero state). Not populated by Constructor today.
+     * @param  list<array<string, mixed>>  $popularProducts  Products from a recommendation pod (zero state).
+     * @param  list<array<string, mixed>>  $topCategories  Top-level categories (zero state).
+     * @param  array<string, mixed>  $metadata  request_id and result_id. Pass result_id to the page for tracking.
+     * @param  array<string, list<array<string, mixed>>>  $sections  Every section Constructor returned, unmodified, keyed by
+     *                                                               section name. Use it for custom sections such as "Recipes".
      */
     public function __construct(
         public readonly array $suggestions = [],
@@ -60,89 +40,65 @@ class AutocompleteResults
         public readonly array $popularProducts = [],
         public readonly array $topCategories = [],
         public readonly array $metadata = [],
+        public readonly array $sections = [],
     ) {}
 
-    /**
-     * Check if there are any suggestions.
-     */
     public function hasSuggestions(): bool
     {
-        return ! empty($this->suggestions);
+        return $this->suggestions !== [];
     }
 
-    /**
-     * Check if there are any product suggestions.
-     */
     public function hasProducts(): bool
     {
-        return ! empty($this->products);
+        return $this->products !== [];
     }
 
-    /**
-     * Check if there are any category suggestions.
-     */
     public function hasCategories(): bool
     {
-        return ! empty($this->categories);
+        return $this->categories !== [];
+    }
+
+    public function hasTrending(): bool
+    {
+        return $this->trending !== [];
+    }
+
+    public function hasPopularProducts(): bool
+    {
+        return $this->popularProducts !== [];
+    }
+
+    public function hasTopCategories(): bool
+    {
+        return $this->topCategories !== [];
     }
 
     /**
-     * Check if there is any zero-state data.
+     * True if any zero-state content (trending, popular products, top categories) is present.
      */
     public function hasZeroStateData(): bool
     {
-        return ! empty($this->trending)
-            || ! empty($this->popularProducts)
-            || ! empty($this->topCategories);
+        return $this->hasTrending() || $this->hasPopularProducts() || $this->hasTopCategories();
     }
 
     /**
-     * Check if there are any trending searches.
-     */
-    public function hasTrending(): bool
-    {
-        return ! empty($this->trending);
-    }
-
-    /**
-     * Check if there are any popular products.
-     */
-    public function hasPopularProducts(): bool
-    {
-        return ! empty($this->popularProducts);
-    }
-
-    /**
-     * Check if there are any top categories.
-     */
-    public function hasTopCategories(): bool
-    {
-        return ! empty($this->topCategories);
-    }
-
-    /**
-     * Check if all results are empty.
+     * True when there is nothing at all to show.
      */
     public function isEmpty(): bool
     {
-        return empty($this->suggestions)
-            && empty($this->products)
-            && empty($this->categories)
-            && ! $this->hasZeroStateData();
+        return $this->isAutocompleteEmpty() && ! $this->hasZeroStateData();
     }
 
     /**
-     * Check if autocomplete results (non-zero-state) are empty.
+     * True when there are no suggestions, products or categories (ignores zero-state content).
      */
     public function isAutocompleteEmpty(): bool
     {
-        return empty($this->suggestions)
-            && empty($this->products)
-            && empty($this->categories);
+        return ! $this->hasSuggestions() && ! $this->hasProducts() && ! $this->hasCategories();
     }
 
     /**
-     * Get all results as an array for easy JSON serialization.
+     * @return array<string, mixed>
      */
     public function toArray(): array
     {
@@ -154,37 +110,28 @@ class AutocompleteResults
             'popularProducts' => $this->popularProducts,
             'topCategories' => $this->topCategories,
             'metadata' => $this->metadata,
+            'sections' => $this->sections,
         ];
     }
 
-    /**
-     * Create an empty AutocompleteResults instance.
-     */
     public static function empty(): self
     {
-        return new self(
-            suggestions: [],
-            products: [],
-            categories: [],
-            trending: [],
-            popularProducts: [],
-            topCategories: [],
-        );
+        return new self;
     }
 
     /**
-     * Create a zero-state AutocompleteResults instance.
+     * @param  list<array<string, mixed>>  $trending
+     * @param  list<array<string, mixed>>  $popularProducts
+     * @param  list<array<string, mixed>>  $topCategories
+     * @param  array<string, mixed>  $metadata
      */
     public static function zeroState(
         array $trending = [],
         array $popularProducts = [],
         array $topCategories = [],
-        array $metadata = []
+        array $metadata = [],
     ): self {
         return new self(
-            suggestions: [],
-            products: [],
-            categories: [],
             trending: $trending,
             popularProducts: $popularProducts,
             topCategories: $topCategories,

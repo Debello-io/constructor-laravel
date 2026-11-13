@@ -1,95 +1,236 @@
 <?php
 
+/*
+|--------------------------------------------------------------------------
+| Constructor for Laravel
+|--------------------------------------------------------------------------
+|
+| Every value can be set from your .env file. The comments explain what
+| each one is for and link to the Constructor documentation that defines
+| it, so you can check a value without leaving this file.
+|
+*/
+
 return [
-    /*
-    |--------------------------------------------------------------------------
-    | Constructor Search API Configuration
-    |--------------------------------------------------------------------------
-    |
-    | These settings configure the Constructor.io Search API endpoints used
-    | for search functionality. Credentials (api_key, api_token) should be
-    | stored in your .env file.
-    |
-    */
-
-    // Search API base URL (ac.cnstrc.com)
-    'search_base_url' => env('CONSTRUCTOR_SEARCH_BASE_URL', 'https://ac.cnstrc.com'),
 
     /*
     |--------------------------------------------------------------------------
-    | API Credentials
+    | Credentials
     |--------------------------------------------------------------------------
     |
-    | Your Constructor.io API credentials. The API key is public and used for
-    | search/browse requests. The API token is secret and used for catalog
-    | management and authenticated endpoints.
+    | Constructor uses three different credentials. They are NOT
+    | interchangeable:
+    |
+    | api_key        Public. Identifies your index ("key_..."). Sent on every
+    |                request as the `key` query parameter.
+    |
+    | api_token      Secret. Created in the dashboard under Integration >
+    |                API Integration. Used ONLY for catalog management
+    |                (uploads, items, tasks). Sent with HTTP Basic auth.
+    |
+    | backend_token  Secret. The "security token" Constructor gives you for a
+    |                backend integration. Sent as the `x-cnstrc-token` header
+    |                on search, browse, autocomplete, recommendation and agent
+    |                requests. Without it, requests from your servers are
+    |                likely to be throttled. Ask your Constructor contact.
+    |
+    | @see https://docs.constructor.com/reference/main-authentication
+    | @see https://docs.constructor.com/docs/integrating-with-constructor-direct-api-integration-required-parameters
     |
     */
 
-    // Public API key (used for search, browse, autocomplete)
     'api_key' => env('CONSTRUCTOR_API_KEY'),
 
-    // Secret API token (used for catalog uploads, admin operations)
     'api_token' => env('CONSTRUCTOR_API_TOKEN'),
 
-    // Agent domain for Shopping Agent (e.g., 'your-store.cnstrc.com')
-    'agent_domain' => env('CONSTRUCTOR_AGENT_DOMAIN'),
-
-    /*
-    |--------------------------------------------------------------------------
-    | Constructor Agent API Configuration
-    |--------------------------------------------------------------------------
-    |
-    | These settings configure the Constructor.io Agent API (Shopping Agent
-    | and Product Insights Agent) used for AI-powered product discovery
-    | and product Q&A functionality.
-    |
-    */
-
-    // Agent API base URL (agent.cnstrc.com)
-    'agent_base_url' => env('CONSTRUCTOR_AGENT_BASE_URL', 'https://agent.cnstrc.com'),
-
-    // Enable content moderation for agent responses
-    'agent_guard' => env('CONSTRUCTOR_AGENT_GUARD', true),
-
-    // Maximum number of result events to return from Shopping Agent
-    'agent_num_result_events' => env('CONSTRUCTOR_AGENT_NUM_RESULT_EVENTS', 5),
-
-    // Maximum results per event from Shopping Agent
-    'agent_num_results_per_event' => env('CONSTRUCTOR_AGENT_NUM_RESULTS_PER_EVENT', 4),
-
-    /*
-    |--------------------------------------------------------------------------
-    | Backend Integration
-    |--------------------------------------------------------------------------
-    |
-    | When making server-side API calls on behalf of browser users, Constructor
-    | requires specific headers and parameters for session tracking,
-    | personalization, and analytics attribution.
-    |
-    | @see https://docs.constructor.com/docs/integrating-with-constructor-backend-integrations-required-parameters
-    |
-    */
-
-    // Backend authentication token (sent as x-cnstrc-token header)
-    // If null, falls back to api_token
     'backend_token' => env('CONSTRUCTOR_BACKEND_TOKEN'),
 
-    // Client identifier for 'c' query parameter
-    // Format: cio-be-laravel-{company-name}
-    // If null, auto-generates from app.name
+    /*
+    |--------------------------------------------------------------------------
+    | Client Identifier (`c` parameter)
+    |--------------------------------------------------------------------------
+    |
+    | Identifies where requests come from in Constructor's reporting. The
+    | documented format for a backend integration is:
+    |
+    |     cio-be-web-{company}     (website)
+    |     cio-be-mobile-{company}  (server-side calls for a mobile app)
+    |
+    | Leave empty to generate "cio-be-web-{slug of APP_NAME}".
+    |
+    */
+
     'client_identifier' => env('CONSTRUCTOR_CLIENT_IDENTIFIER'),
 
     /*
     |--------------------------------------------------------------------------
-    | HTTP Client Configuration
+    | API Hosts
     |--------------------------------------------------------------------------
+    |
+    | Only change these if your Constructor contact gives you different hosts.
+    |
     */
 
-    // Request timeout in seconds
-    'timeout' => env('CONSTRUCTOR_TIMEOUT', 30),
+    'search_base_url' => env('CONSTRUCTOR_SEARCH_BASE_URL', 'https://ac.cnstrc.com'),
 
-    // Retry configuration for failed requests
-    'retry_times' => env('CONSTRUCTOR_RETRY_TIMES', 2),
-    'retry_sleep' => env('CONSTRUCTOR_RETRY_SLEEP', 100), // milliseconds
+    'agent_base_url' => env('CONSTRUCTOR_AGENT_BASE_URL', 'https://agent.cnstrc.com'),
+
+    /*
+    |--------------------------------------------------------------------------
+    | Default Section
+    |--------------------------------------------------------------------------
+    |
+    | The index section used when a call does not specify one. Most catalogs
+    | keep their products in "Products".
+    |
+    */
+
+    'default_section' => env('CONSTRUCTOR_SECTION', 'Products'),
+
+    /*
+    |--------------------------------------------------------------------------
+    | Shopper Identity
+    |--------------------------------------------------------------------------
+    |
+    | Personalization and analytics depend on every server-side request
+    | carrying the same identifiers as the Constructor beacon running in the
+    | shopper's browser:
+    |
+    |   i   anonymous client ID, read from the `ConstructorioID_client_id` cookie
+    |   s   session number, read from the `ConstructorioID_session_id` cookie
+    |   ui  your own user ID, sent only for signed-in shoppers
+    |
+    | generate_client_id  When the beacon has not created the client ID cookie
+    |                     yet (first page view), generate a UUID, send it, and
+    |                     set the cookie so the beacon adopts the same value.
+    |
+    | send_user_id        Send the authenticated user's ID (auth()->id()) as
+    |                     `ui`. Use Constructor::resolveUserIdUsing() to send a
+    |                     different or hashed identifier instead.
+    |
+    | Consent: register Constructor::resolveConsentUsing() to omit `i` for
+    | shoppers who have not consented to personalization.
+    |
+    | @see https://docs.constructor.com/docs/integrating-with-constructor-retrieving-results-integration-approaches-backend-integration-options
+    |
+    */
+
+    'identity' => [
+        'generate_client_id' => env('CONSTRUCTOR_GENERATE_CLIENT_ID', true),
+        'send_user_id' => env('CONSTRUCTOR_SEND_USER_ID', true),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | HTTP Client
+    |--------------------------------------------------------------------------
+    |
+    | timeout         Seconds to wait for a normal API response.
+    | stream_timeout  Seconds to allow a streaming AI agent response to run.
+    | retry_attempts  Total attempts for a request. Only connection failures,
+    |                 429 and 5xx responses are retried. 4xx errors are not.
+    | retry_delay     Milliseconds before the first retry. Doubles each time.
+    |
+    */
+
+    'timeout' => env('CONSTRUCTOR_TIMEOUT', 10),
+
+    'stream_timeout' => env('CONSTRUCTOR_STREAM_TIMEOUT', 120),
+
+    'retry_attempts' => env('CONSTRUCTOR_RETRY_ATTEMPTS', 2),
+
+    'retry_delay' => env('CONSTRUCTOR_RETRY_DELAY', 100),
+
+    /*
+    |--------------------------------------------------------------------------
+    | Error Handling
+    |--------------------------------------------------------------------------
+    |
+    | By default, storefront reads (search, browse, autocomplete,
+    | recommendations) log the failure and return an empty result, so a
+    | Constructor outage degrades a page instead of breaking it.
+    |
+    | Set to true to throw ConstructorException instead, e.g. in tests or
+    | when you want to render your own fallback.
+    |
+    | AI agent and catalog calls always throw.
+    |
+    */
+
+    'throw_exceptions' => env('CONSTRUCTOR_THROW_EXCEPTIONS', false),
+
+    /*
+    |--------------------------------------------------------------------------
+    | Logging
+    |--------------------------------------------------------------------------
+    |
+    | Log channel for API failures. Null uses your default channel. Shopper
+    | identifiers and credentials are never written to the log.
+    |
+    */
+
+    'log_channel' => env('CONSTRUCTOR_LOG_CHANNEL'),
+
+    /*
+    |--------------------------------------------------------------------------
+    | AI Shopping Agent & Product Insights Agent
+    |--------------------------------------------------------------------------
+    |
+    | agent_domain   The agent domain configured for your index (required for
+    |                the Shopping Agent).
+    | guard          Ask Constructor to screen agent conversations for
+    |                harmful or off-topic content. The API default is off;
+    |                this package turns it on.
+    |
+    | @see https://docs.constructor.com/reference/v1-asa-retrieve-intent
+    |
+    */
+
+    'agent' => [
+        'domain' => env('CONSTRUCTOR_AGENT_DOMAIN'),
+        'guard' => env('CONSTRUCTOR_AGENT_GUARD', true),
+        'num_result_events' => env('CONSTRUCTOR_AGENT_NUM_RESULT_EVENTS', 5),
+        'num_results_per_event' => env('CONSTRUCTOR_AGENT_NUM_RESULTS_PER_EVENT', 4),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Catalog Management
+    |--------------------------------------------------------------------------
+    |
+    | Defaults for catalog uploads, item updates and task polling. These calls
+    | authenticate with `api_token`.
+    |
+    | notification_email  Constructor emails this address if an upload fails.
+    | upload_timeout      Seconds to allow a catalog file upload to take.
+    | task_poll_interval  Seconds between task status checks.
+    | task_timeout        Seconds to wait for a task before giving up.
+    |
+    | @see https://docs.constructor.com/reference/v1-catalog-create-or-replace-catalog
+    |
+    */
+
+    'catalog' => [
+        'notification_email' => env('CONSTRUCTOR_NOTIFICATION_EMAIL'),
+        'force' => env('CONSTRUCTOR_FORCE_UPLOAD', false),
+        'upload_timeout' => env('CONSTRUCTOR_UPLOAD_TIMEOUT', 300),
+        'task_poll_interval' => env('CONSTRUCTOR_TASK_POLL_INTERVAL', 10),
+        'task_timeout' => env('CONSTRUCTOR_TASK_TIMEOUT', 600),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Laravel Scout
+    |--------------------------------------------------------------------------
+    |
+    | Settings for the "constructor" Scout engine (SCOUT_DRIVER=constructor).
+    |
+    | batch_size  Items sent per /v2/items request when Scout syncs models.
+    |
+    */
+
+    'scout' => [
+        'batch_size' => env('CONSTRUCTOR_SCOUT_BATCH_SIZE', 1000),
+    ],
+
 ];

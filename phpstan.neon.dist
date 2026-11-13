@@ -1,0 +1,25 @@
+# Static analysis for the package source.
+# Run with: composer analyse
+includes:
+    - vendor/larastan/larastan/extension.neon
+
+parameters:
+    level: 6
+    paths:
+        - src
+    # The 1.x alias stubs declare classes inside `if (false)` purely for IDEs.
+    excludePaths:
+        - src/Services/Search/ConstructorSandboxSearch.php
+        - src/Services/ConstructorAgentService.php
+        - src/Services/ConstructorService.php
+        - src/Search/ConstructorEngine.php
+        - src/Collections/SearchResultCollection.php
+        - src/Contracts/SandboxSearchContract.php
+    ignoreErrors:
+        # Scout adds getScoutKey(), toSearchableArray(), scoutMetadata() and the
+        # *ScoutModelsByIds() helpers to models through the Searchable trait.
+        # Scout ships no interface for them, so PHPStan only sees a plain Model.
+        -
+            identifier: method.notFound
+            path: src/Scout/ConstructorEngine.php
+            message: '#^Call to an undefined method Illuminate\\Database\\Eloquent\\Model::(getScoutKey|getScoutModelsByIds|queryScoutModelsByIds|toSearchableArray|scoutMetadata)\(\)\.$#'

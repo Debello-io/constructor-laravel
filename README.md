@@ -1,736 +1,360 @@
-# Constructor.io Laravel Integration
+# Constructor for Laravel
 
-[![Latest Version on Packagist](https://img.shields.io/packagist/v/timjohnbancroft/constructor-laravel.svg?style=flat-square)](https://packagist.org/packages/timjohnbancroft/constructor-laravel)
-[![License](https://img.shields.io/packagist/l/timjohnbancroft/constructor-laravel.svg?style=flat-square)](https://packagist.org/packages/timjohnbancroft/constructor-laravel)
+[![CI](https://github.com/Debello-io/constructor-laravel/actions/workflows/ci.yml/badge.svg)](https://github.com/Debello-io/constructor-laravel/actions/workflows/ci.yml)
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-A Laravel package for [Constructor.io](https://constructor.io) - AI-powered product discovery.
+A Laravel package for [Constructor](https://constructor.com) product discovery: search, browse, autocomplete, recommendations, the AI Shopping Agent and Product Insights Agent, catalog management, and a Laravel Scout engine.
 
-## Features
+Constructor has official client libraries for JavaScript, Node, Java, Python and .NET, but not PHP. This package calls the REST API directly and handles the **backend-integration requirements** for you: shopper identity, forwarded headers, the security token and the client identifier. Every endpoint and parameter has been checked against the [Constructor API reference](https://docs.constructor.com/reference).
 
-- **Product Search** - Full-text search with filters, sorting, pagination
-- **Category Browse** - Browse products by category or facet
-- **Autocomplete** - Search suggestions and product previews with zero-state support
-- **AI Shopping Agent** - Natural language product discovery ("I need a gift for my mom")
-- **Product Insights Agent** - AI-powered Q&A on product detail pages
-- **Recommendations** - Personalized product recommendations
-- **Collections** - Browse curated product collections
-- **Catalog Management** - Bulk catalog uploads (CSV, JSONL)
-- **Backend Integration** - Automatic forwarding of user context headers and cookies for server-side API calls
-- **Laravel Scout** - Full Scout engine integration
+- [Requirements](#requirements)
+- [Installation](#installation)
+- [Credentials](#credentials)
+- [Backend integration checklist](#backend-integration-checklist)
+- [Usage](#usage)
+- [Error handling](#error-handling)
+- [Testing your app](#testing-your-app)
+- [Configuration reference](#configuration-reference)
+- [Upgrading from 1.x](#upgrading-from-1x)
+- [Contributing](#contributing)
 
-## Architecture Overview
-
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                           Your Laravel Application                          │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│   ┌─────────────────────┐    ┌────────────────────────────────────────┐    │
-│   │  Constructor Facade │───▶│  ConstructorSandboxSearch              │    │
-│   │  (Search/Browse)    │    │  - search(), browse(), autocomplete()  │    │
-│   └─────────────────────┘    │  - getRecommendations()                │    │
-│                              │  - getBrowseGroups(), getCollections() │    │
-│                              └──────────────┬─────────────────────────┘    │
-│                                             │                               │
-│   ┌─────────────────────┐                   ▼                               │
-│   │ ConstructorService  │    ┌────────────────────────────────────────┐    │
-│   │ (Catalog Management)│───▶│        ac.cnstrc.com (Search API)      │    │
-│   │ - uploadCatalog()   │    └────────────────────────────────────────┘    │
-│   │ - getTaskStatus()   │                                                   │
-│   └─────────────────────┘                                                   │
-│                                                                             │
-│   ┌─────────────────────┐    ┌────────────────────────────────────────┐    │
-│   │ ConstructorAgent    │───▶│      agent.cnstrc.com (Agent API)      │    │
-│   │ Service             │    │  - AI Shopping Agent                   │    │
-│   │ - askShoppingAgent()│    │  - Product Insights Agent              │    │
-│   │ - askProductQuestion│    └────────────────────────────────────────┘    │
-│   └─────────────────────┘                                                   │
-│                                                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
+For a full walkthrough with complete controller and view examples, see the **[User Guide](docs/USER_GUIDE.md)**.
 
 ## Requirements
 
-- PHP 8.1+
-- Laravel 10.x, 11.x, or 12.x
-- Constructor.io account ([constructor.io](https://constructor.io))
+- PHP 8.2+
+- Laravel 11, 12 or 13 (Laravel 13 needs PHP 8.3+)
+- Optional: Laravel Scout 10.11+ or 11 for the Scout engine
 
 ## Installation
 
-### 1. Install via Composer
-
 ```bash
-composer require timjohnbancroft/constructor-laravel
+composer require debello-io/constructor-laravel
+php artisan vendor:publish --tag=constructor-config
 ```
 
-### 2. Publish Configuration
+## Credentials
 
-```bash
-php artisan vendor:publish --provider="ConstructorIO\Laravel\ConstructorServiceProvider"
-```
-
-### 3. Configure Environment
-
-Add to your `.env` file:
+Constructor uses three different credentials. **They are not interchangeable.**
 
 ```env
-CONSTRUCTOR_API_KEY=your-api-key
-CONSTRUCTOR_API_TOKEN=your-api-token
-CONSTRUCTOR_AGENT_DOMAIN=your-agent-domain  # Optional: for AI Shopping Agent
+# Public. Identifies your index. Dashboard: Integration > API Integration.
+CONSTRUCTOR_API_KEY=key_xxxxxxxx
 
-# Optional: Backend integration (for server-side calls on behalf of browser users)
-CONSTRUCTOR_BACKEND_TOKEN=your-backend-token      # Falls back to API_TOKEN if not set
-CONSTRUCTOR_CLIENT_IDENTIFIER=cio-be-laravel-your-company  # Auto-generates if not set
+# Secret. Only for catalog management (uploads, items, tasks).
+CONSTRUCTOR_API_TOKEN=tok_xxxxxxxx
+
+# Secret. The backend "security token" Constructor gives you. It is sent as the
+# x-cnstrc-token header on every search/browse/autocomplete/recommendation/agent
+# request. Without it, requests from your servers are likely to be throttled.
+CONSTRUCTOR_BACKEND_TOKEN=xxxxxxxx
+
+# Required for the AI Shopping Agent.
+CONSTRUCTOR_AGENT_DOMAIN=your-agent-domain
 ```
 
-Get your credentials from the [Constructor.io Dashboard](https://app.constructor.io).
+| Credential | Used for | Sent as |
+|---|---|---|
+| API key | Every request | `key` query parameter |
+| API token | Catalog management only | HTTP Basic username |
+| Backend token | Storefront and agent requests | `x-cnstrc-token` header |
 
-**Credential Types:**
-- **API Key** (public): Identifies your index, used for search/browse/autocomplete requests
-- **API Token** (secret): Used for authenticated operations like catalog uploads
+See [Authentication](https://docs.constructor.com/reference/main-authentication) and [Required parameters](https://docs.constructor.com/docs/integrating-with-constructor-direct-api-integration-required-parameters).
 
-## Quick Start
+## Backend integration checklist
 
-### Search Products
+When your server calls Constructor on behalf of a shopper, Constructor still has to know who that shopper is. The package sends all of this automatically from the current request:
+
+| Value | Source |
+|---|---|
+| `i` (client ID) | The beacon's `ConstructorioID_client_id` cookie. On a first visit, a UUID is generated and set as that cookie. |
+| `s` (session number) | The beacon's `ConstructorioID_session_id` cookie, or `1` until it exists. |
+| `ui` (user ID) | `auth()->id()`, **only** for signed-in shoppers. |
+| `c` (client identifier) | `cio-be-web-{your APP_NAME}`, or `CONSTRUCTOR_CLIENT_IDENTIFIER`. |
+| `User-Agent`, `X-Forwarded-For` | The shopper's browser and IP address. |
+| `x-cnstrc-token` | `CONSTRUCTOR_BACKEND_TOKEN`. |
+
+Your part:
+
+1. **Load the Constructor beacon on every page.** It sets the cookies above and sends the behavioral events (clicks, add to cart, purchases) that Constructor learns from. This package does not send tracking events.
+2. **Pass `result_id` to the page.** Every result object has a `resultId`. Put it in `data-cnstrc-result-id` so the beacon's "results loaded" event is attributed:
+   ```blade
+   <div data-cnstrc-search data-cnstrc-result-id="{{ $results->resultId }}" data-cnstrc-num-results="{{ $results->total }}">
+   ```
+3. **Configure [trusted proxies](https://laravel.com/docs/requests#configuring-trusted-proxies)** if you're behind a load balancer or CDN. Otherwise every request appears to come from the proxy's IP.
+4. **Respect consent.** If a shopper hasn't consented to personalization, the client ID must be omitted:
+   ```php
+   // AppServiceProvider::boot()
+   Constructor::resolveConsentUsing(fn (?Request $request) => $request?->cookie('consent') === 'all');
+   ```
+   If your consent banner sets that cookie from JavaScript, add it to `EncryptCookies::except([...])`. Otherwise Laravel can't decrypt it and `cookie()` returns `null`.
+5. **Anonymize `ui`** (recommended by Constructor). Use a keyed hash: a plain hash of a sequential ID is easy to reverse.
+   ```php
+   Constructor::resolveUserIdUsing(fn (?Request $request) => $request?->user()
+       ? hash_hmac('sha256', (string) $request->user()->getAuthIdentifier(), config('app.key'))
+       : null);
+   ```
+   Register both resolvers once, in a service provider's `boot()`. They are process-wide, so registering one per request (for example in middleware) on Octane would leak into other shoppers' requests.
+6. **Don't share cached personalized results** between shoppers. If you cache, include the client ID and user ID in the cache key. Full-page caches and CDNs must not cache responses that carry the generated `ConstructorioID_client_id` cookie (`Cache-Control: private`), or every shopper would share one ID.
+7. **Use the `web` middleware group** for routes that call Constructor. The first-visit client ID cookie is queued with `Cookie::queue()`, which needs `AddQueuedCookiesToResponse`. On stateless `api` routes, let the beacon set the cookie, or pass `client_id` / `session_id` explicitly.
+8. **Hide the token in debugging tools.** If you use Telescope, add `x-cnstrc-token` to `Telescope::hideRequestHeaders()`.
+
+See [Backend integration options](https://docs.constructor.com/docs/integrating-with-constructor-retrieving-results-integration-approaches-backend-integration-options).
+
+## Usage
 
 ```php
 use ConstructorIO\Laravel\Facades\Constructor;
+```
 
-// Basic search
-$results = Constructor::search('blue shoes');
+You can also inject `ConstructorIO\Laravel\Contracts\SearchProvider` (or `ConstructorIO\Laravel\Constructor`) instead of using the facade.
 
-// With filters and options
-$results = Constructor::search('shoes', [
-    'brand' => ['Nike', 'Adidas'],
-    'color' => ['blue'],
+### Search
+
+```php
+$results = Constructor::search('pellet grill', [
+    'brand' => ['Traeger', 'Weber'],     // values for one facet are ORed
+    'fuel_type' => 'Pellet',             // different facets are ANDed
 ], [
     'page' => 1,
-    'per_page' => 24,
+    'per_page' => 24,                    // max 200
     'sort_by' => 'price',
     'sort_order' => 'ascending',
+    'range_filters' => ['price' => ['min' => 300, 'max' => 1500]],
 ]);
 
-// Access results
-foreach ($results->products as $product) {
-    echo $product['name'];
-    echo $product['price'];
-    echo $product['image_url'];
+if ($results->isRedirect()) {            // a redirect rule matched in the dashboard
+    return redirect($results->redirectUrl());
 }
 
-// Pagination
-echo "Page {$results->page} of {$results->totalPages()}";
-echo "Total: {$results->total} products";
+foreach ($results->products as $product) {
+    $product['name'];      $product['price'];   $product['image_url'];
+    $product['url'];       $product['_raw'];    // every catalog field
+    $product['labels']['is_sponsored'] ?? false; // show an "Ad" badge
+}
+
+$results->total;           // capped by Constructor at 10,000: check isTotalCapped()
+$results->facets;          // ['brand' => ['name' => 'Brand', 'type' => 'checkbox_list', 'options' => [...], 'values' => [...]]]
+$results->sortOptions;     // sort options configured in the dashboard
+$results->resultId;        // pass to the page for tracking
 ```
 
-### Browse by Category
+Every option (`offset`, `filter_match_types`, `pre_filter_expression`, `hidden_fields`, `fmt_options`, `variations_map`, `user_segments`, `lang`, `parameters`, ...) is documented on [`ParameterBuilder`](src/Support/ParameterBuilder.php).
+
+### Browse (category, brand and collection pages)
 
 ```php
-use ConstructorIO\Laravel\Facades\Constructor;
+$grills = Constructor::browse('group_id', 'gas-grills', ['brand' => 'Weber'], ['per_page' => 24]);
+$weber  = Constructor::browse('brand', 'Weber');
 
-// Browse by category
-$results = Constructor::browse('group_id', 'mens-clothing');
+$categories = Constructor::getBrowseGroups(['max_items' => 10, 'max_children' => 5]);
 
-// Browse by brand
-$results = Constructor::browse('brand', 'Nike', [], [
-    'page' => 1,
-    'per_page' => 24,
-]);
+$collections = Constructor::getCollections(['max_items' => 10]);
+$collection  = Constructor::getCollection('summer-cookout');      // name, data, or null
+$products    = Constructor::browseCollection('summer-cookout');
 
-// Get category hierarchy
-$categories = Constructor::getBrowseGroups([
-    'max_items' => 10,
-    'max_children' => 5,
-    'with_images' => true,
-]);
+$recentlyViewed = Constructor::browseItems(['TRG-780', 'WEB-SPIRIT-E325']);
 ```
 
 ### Autocomplete
 
 ```php
-use ConstructorIO\Laravel\Facades\Constructor;
-
-// Get autocomplete suggestions
-$results = Constructor::autocomplete('blu', [
+$results = Constructor::autocomplete('web', [
     'sections' => [
-        'suggestions' => ['enabled' => true, 'limit' => 5],
-        'products' => ['enabled' => true, 'limit' => 6],
+        'suggestions' => ['limit' => 5],
+        'products' => ['limit' => 6],
     ],
 ]);
 
-foreach ($results->suggestions as $suggestion) {
-    echo $suggestion['term'];
-}
+$results->suggestions;   // [['term' => 'weber grill', 'matched_terms' => [...]], ...]
+$results->products;
+$results->sections;      // every section returned, including custom ones
 
-// Zero-state (search box focused but empty)
-$zeroState = Constructor::getZeroStateData([
-    'show_top_categories' => true,
-    'show_popular_products' => true,
-    'recommendation_pod_id' => 'hp-bestsellers',
-]);
+// Empty, focused search box:
+$zeroState = Constructor::getZeroStateData(['recommendation_pod_id' => 'zero-state-bestsellers']);
 ```
 
 ### Recommendations
 
 ```php
-use ConstructorIO\Laravel\Facades\Constructor;
+$bestsellers = Constructor::getRecommendations('home-bestsellers', ['num_results' => 8]);
 
-// Home page recommendations
-$recs = Constructor::getRecommendations('home-page-1', [
-    'num_results' => 8,
-]);
+// Item-based pods (alternatives, complementary items, bundles). Pass one ID or several (a cart).
+$accessories = Constructor::getItemRecommendations('pdp-complementary', 'TRG-780', ['num_results' => 4]);
 
-// Product page recommendations (requires item_id)
-$similar = Constructor::getItemRecommendations('pdp-similar', 'PRODUCT-123');
+$accessories->title;     // the pod's display name
+$accessories->products;
 ```
 
-### Collections
-
-```php
-use ConstructorIO\Laravel\Facades\Constructor;
-
-// Get all collections
-$collections = Constructor::getCollections(['max_items' => 10]);
-
-// Get collection metadata
-$collection = Constructor::getCollection('summer-essentials');
-
-// Browse products in a collection
-$results = Constructor::browseCollection('summer-essentials', [], [
-    'page' => 1,
-    'per_page' => 24,
-]);
-```
+Pod-specific parameters are supported: `term` (query recommendations), `filters` (filtered items), `variation_id`. See [Recommendations](https://docs.constructor.com/reference/v1-recommendations-get-pod-results).
 
 ### AI Shopping Agent
 
 ```php
-use ConstructorIO\Laravel\Services\ConstructorAgentService;
+$agent = Constructor::agent();
 
-$agent = app(ConstructorAgentService::class);
+$reply = $agent->askShoppingAgent('A smoker for a small patio, under $500');
+$reply['message'];               // the agent's text
+$reply['products'];              // recommended products
+$reply['refinements'];           // follow-up questions with options
+$reply['thread_id'];             // pass back to continue the conversation
 
-// Natural language query
-$response = $agent->askShoppingAgent('I need a gift for my mom who likes gardening');
+$followUp = $agent->askShoppingAgent('Something electric instead', $reply['thread_id']);
+```
 
-echo $response['message'];
-foreach ($response['products'] as $product) {
-    echo $product['name'];
-}
+Stream the answer to the browser as it is generated:
 
-// Continue conversation
-$followUp = $agent->askShoppingAgent(
-    'Something under $50',
-    $response['thread_id']
-);
+```php
+return response()->stream(function () use ($agent, $query) {
+    $agent->askShoppingAgentStreaming($query, function (string $event, array $data) {
+        echo "event: {$event}\ndata: ".json_encode($data)."\n\n";
+        ob_flush(); flush();
+    });
+}, 200, ['Content-Type' => 'text/event-stream', 'X-Accel-Buffering' => 'no']);
 ```
 
 ### Product Insights Agent
 
 ```php
-use ConstructorIO\Laravel\Services\ConstructorAgentService;
+$questions = $agent->getProductQuestions('TRG-780');          // ['questions' => ['Can it cold smoke?', ...]]
 
-$agent = app(ConstructorAgentService::class);
-
-// Get suggested questions for a product
-$questions = $agent->getProductQuestions('PRODUCT-123');
-
-// Ask a question about a product
-$answer = $agent->askProductQuestion(
-    question: 'Is this true to size?',
-    itemId: 'PRODUCT-123'
-);
-
-echo $answer['answer'];
+$answer = $agent->askProductQuestion('Can it cold smoke cheese?', 'TRG-780');
+$answer['answer'];
+$answer['follow_up_questions'];
+$answer['item_results'];                                       // related products
 ```
 
-### Catalog Management
+### Catalog management
+
+Requires `CONSTRUCTOR_API_TOKEN`.
 
 ```php
-use ConstructorIO\Laravel\Services\ConstructorService;
+$catalog = Constructor::catalog();
 
-$constructor = app(ConstructorService::class);
+// Full replace. Format (csv or jsonl) comes from the file extension.
+$upload = $catalog->uploadCatalog(storage_path('catalog/items.jsonl'), 'create_or_replace', [
+    'variations_file' => storage_path('catalog/variations.jsonl'),
+    'item_groups_file' => storage_path('catalog/item_groups.jsonl'),
+    'notification_email' => 'catalog-alerts@example.com',
+]);
 
-// Upload catalog file (creates or replaces all items)
-$result = $constructor->uploadCatalog(
-    storage_path('app/catalog/items.csv'),
-    'create_or_replace'
-);
+// Partial update that only changes the fields you send.
+$catalog->uploadCatalog(storage_path('catalog/price-updates.jsonl'), 'patch', ['patch_delta' => true]);
 
-// Or patch (update only specified items)
-$result = $constructor->uploadCatalog(
-    storage_path('app/catalog/updates.csv'),
-    'patch'
-);
+$status = $catalog->waitForTaskCompletion($upload['task_id']);   // throws TaskTimeoutException
+$status['successful'];   $status['warnings'];
 
-// Wait for completion
-$status = $constructor->waitForTaskCompletion($result['task_id']);
-
-if ($status['successful']) {
-    echo "Catalog uploaded!";
-}
+// Individual items (batched automatically, max 10,000 per request)
+$catalog->upsertItems([['id' => 'TRG-780', 'name' => 'Pro 780', 'data' => ['price' => 999]]]);
+$catalog->patchItems([['id' => 'TRG-780', 'data' => ['price' => 899]]]);
+$catalog->deleteItems(['OLD-SKU-1']);
+$catalog->getItem('TRG-780');
 ```
 
-### Recipes (If Configured)
+Large uploads can take minutes, so run them from a queued job. See [Catalog management](https://docs.constructor.com/reference/v1-catalog-create-or-replace-catalog).
 
-```php
-use ConstructorIO\Laravel\Facades\Constructor;
+### Laravel Scout
 
-// Check if recipes are supported
-if (Constructor::supportsRecipes()) {
-    // Search recipes
-    $results = Constructor::searchRecipes('chicken pasta');
-
-    // Browse recipes by category
-    $results = Constructor::browseRecipes('meal_type', 'dinner');
-
-    // Get a single recipe
-    $recipe = Constructor::getRecipe('recipe-123');
-}
+```env
+SCOUT_DRIVER=constructor
 ```
 
-## Data Transfer Objects (DTOs)
-
-All search operations return strongly-typed DTOs with convenient methods.
-
-### SearchResults
-
-Returned by `search()`, `browse()`, and `browseCollection()`.
-
 ```php
-$results = Constructor::search('shoes');
-
-// Properties
-$results->products      // array - Product data
-$results->total         // int - Total matching results
-$results->page          // int - Current page (1-indexed)
-$results->perPage       // int - Results per page
-$results->facets        // array - Available filters with counts
-$results->groups        // array - Category hierarchy (for browse)
-$results->metadata      // array - Request ID, result ID, etc.
-
-// Methods
-$results->hasMore()        // bool - More pages available?
-$results->totalPages()     // int - Calculate total pages
-$results->isEmpty()        // bool - No products?
-$results->count()          // int - Products on this page
-$results->getOffset()      // int - Offset for "Showing X-Y of Z"
-$results->nextPageNumber() // int - Next page number or 0
-$results->toArray()        // array - For JSON serialization
-```
-
-**Facets Structure:**
-```php
-// $results->facets
-[
-    'brand' => [
-        'name' => 'Brand',           // Display name
-        'values' => [                 // Value => count
-            'Nike' => 45,
-            'Adidas' => 32,
-        ],
-        'type' => 'checkbox_list',   // single_select, checkbox_list, or range
-    ],
-    'price' => [
-        'name' => 'Price',
-        'values' => [...],
-        'type' => 'range',
-        'min' => 25.00,
-        'max' => 299.99,
-    ],
-]
-```
-
-### AutocompleteResults
-
-Returned by `autocomplete()` and `getZeroStateData()`.
-
-```php
-$results = Constructor::autocomplete('blu');
-
-// Properties
-$results->suggestions      // array - Search term suggestions
-$results->products         // array - Product previews
-$results->categories       // array - Category suggestions
-$results->trending         // array - Trending searches (zero-state)
-$results->popularProducts  // array - Popular products (zero-state)
-$results->topCategories    // array - Top categories (zero-state)
-$results->metadata         // array - Request metadata
-
-// Methods
-$results->hasSuggestions()     // bool
-$results->hasProducts()        // bool
-$results->hasCategories()      // bool
-$results->hasZeroStateData()   // bool
-$results->hasTrending()        // bool
-$results->hasPopularProducts() // bool
-$results->hasTopCategories()   // bool
-$results->isEmpty()            // bool
-$results->isAutocompleteEmpty() // bool - Ignores zero-state
-$results->toArray()            // array
-```
-
-### RecommendationResults
-
-Returned by `getRecommendations()` and `getItemRecommendations()`.
-
-```php
-$recs = Constructor::getRecommendations('home-bestsellers');
-
-// Properties
-$recs->podId       // string - The pod ID requested
-$recs->title       // string - Pod display name
-$recs->products    // array - Recommended products
-$recs->total       // int - Total recommendations available
-$recs->metadata    // array - Request metadata, pod info
-
-// Methods
-$recs->isEmpty()           // bool
-$recs->hasRecommendations() // bool
-$recs->count()             // int - Number of products returned
-$recs->toArray()           // array
-```
-
-## Complete Facade Methods Reference
-
-```php
-use ConstructorIO\Laravel\Facades\Constructor;
-
-// Search & Browse
-Constructor::search(string $query, array $filters = [], array $options = []): SearchResults;
-Constructor::browse(string $filterName, string $filterValue, array $filters = [], array $options = []): SearchResults;
-Constructor::autocomplete(string $query, array $options = []): AutocompleteResults;
-Constructor::getZeroStateData(array $options = []): AutocompleteResults;
-
-// Recommendations
-Constructor::getRecommendations(string $podId, array $options = []): RecommendationResults;
-Constructor::getItemRecommendations(string $podId, string $itemId, array $options = []): RecommendationResults;
-
-// Categories & Groups
-Constructor::getBrowseGroups(array $options = []): array;
-
-// Collections
-Constructor::getCollections(array $options = []): array;
-Constructor::getCollection(string $collectionId): ?array;
-Constructor::browseCollection(string $collectionId, array $filters = [], array $options = []): SearchResults;
-Constructor::getFirstProductImageFromCollection(string $collectionId): ?string;
-
-// Facets
-Constructor::getFacets(string $query, array $filters = []): array;
-Constructor::getAvailableFacets(): array;
-Constructor::getFacetValuesWithImages(string $facetName, int $maxItems = 10): array;
-
-// Recipes
-Constructor::searchRecipes(string $query, array $filters = [], array $options = []): SearchResults;
-Constructor::browseRecipes(string $filterName, string $filterValue, array $filters = [], array $options = []): SearchResults;
-Constructor::getRecipe(string $recipeId): ?array;
-
-// Feature Detection
-Constructor::supportsZeroState(): bool;
-Constructor::supportsRecommendations(): bool;
-Constructor::supportsBrowseGroups(): bool;
-Constructor::supportsCollections(): bool;
-Constructor::supportsRecipes(): bool;
-Constructor::getProviderName(): string;
-```
-
-## Search Options Reference
-
-Options available for `search()` and `browse()`:
-
-```php
-$options = [
-    // Pagination
-    'page' => 1,              // Page number (1-indexed)
-    'per_page' => 24,         // Results per page (max 100)
-
-    // Sorting
-    'sort_by' => 'price',     // Field to sort by
-    'sort_order' => 'ascending', // 'ascending' or 'descending'
-
-    // Section
-    'section' => 'Products',  // Constructor section name
-
-    // Range Filters
-    'range_filters' => [
-        'price' => ['min' => 50, 'max' => 200],
-    ],
-
-    // User Context (for personalization)
-    'user_id' => 'user-123',
-    'session_id' => 'session-abc',
-];
-```
-
-## Laravel Scout Integration
-
-### Register the Engine
-
-The package automatically registers the `constructor` Scout driver. Configure in `config/scout.php`:
-
-```php
-return [
-    'driver' => env('SCOUT_DRIVER', 'constructor'),
-
-    'constructor' => [
-        'api_key' => env('CONSTRUCTOR_API_KEY'),
-        'api_token' => env('CONSTRUCTOR_API_TOKEN'),
-    ],
-];
-```
-
-### Make Models Searchable
-
-```php
-use Illuminate\Database\Eloquent\Model;
+use ConstructorIO\Laravel\Scout\ConstructorSearchable;
 use Laravel\Scout\Searchable;
 
-class Product extends Model
+class Product extends Model implements ConstructorSearchable
 {
     use Searchable;
 
-    /**
-     * Get the Constructor section for this model.
-     */
     public function getConstructorSection(): string
     {
         return 'Products';
     }
 
-    /**
-     * Get the indexable data array for the model.
-     */
-    public function toSearchableArray(): array
+    public function toConstructorItem(): array
     {
         return [
-            'id' => $this->sku,
             'name' => $this->name,
-            'url' => route('products.show', $this),
-            'image_url' => $this->image_url,
-            'price' => $this->price,
-            'brand' => $this->brand,
-            'categories' => $this->categories->pluck('name')->toArray(),
+            'data' => [
+                'url' => route('products.show', $this),
+                'image_url' => $this->image_url,
+                'price' => $this->price,
+                'group_ids' => $this->categories->pluck('slug')->all(),
+            ],
         ];
     }
 }
+
+$products = Product::search('smoker')->where('brand', 'Traeger')->paginate(24);
 ```
 
-### Search with Scout
+The item ID is the model's Scout key. Without `ConstructorSearchable`, `toSearchableArray()` is used: `name` stays at the top level and every other field moves into `data`. Scout searches go through the same storefront client, so they carry the shopper's identity too. Most retailers sync the catalog with file uploads and use Scout only for incremental updates.
+
+## Error handling
+
+| Call | On failure |
+|---|---|
+| Search, browse, autocomplete, recommendations, facets, groups, collections | Logs a warning and returns an empty result, so a page still renders. Set `CONSTRUCTOR_THROW_EXCEPTIONS=true` to throw instead. |
+| AI agents, catalog management, Scout indexing | Throws. |
+| Missing API key, token or agent domain | Always throws `ConfigurationException`. |
+
+Every exception extends `ConstructorIO\Laravel\Exceptions\ConstructorException`:
+
+- `AuthenticationException`: 401 or 403
+- `RateLimitException`: 429. On storefront calls this usually means a missing `CONSTRUCTOR_BACKEND_TOKEN`.
+- `ApiException`: any other error status; see `getStatusCode()` and `getResponseBody()`
+- `ConnectionException`: Constructor could not be reached
+- `TaskTimeoutException`, `InvalidCatalogDataException`: catalog management
+
+Only connection errors, 429 and 5xx responses are retried, with exponential backoff. Other 4xx responses are never retried. Logs never include tokens or shopper identifiers.
+
+## Testing your app
+
+Mock the facade:
 
 ```php
-// Basic search
-$products = Product::search('blue shirt')->get();
-
-// With filters
-$products = Product::search('shirt')
-    ->where('brand', 'Nike')
-    ->paginate(24);
-```
-
-## Configuration Reference
-
-### `config/constructor.php`
-
-```php
-return [
-    // API Credentials
-    'api_key' => env('CONSTRUCTOR_API_KEY'),
-    'api_token' => env('CONSTRUCTOR_API_TOKEN'),
-
-    // API Endpoints
-    'search_base_url' => env('CONSTRUCTOR_SEARCH_BASE_URL', 'https://ac.cnstrc.com'),
-    'agent_base_url' => env('CONSTRUCTOR_AGENT_BASE_URL', 'https://agent.cnstrc.com'),
-
-    // AI Agent Settings
-    'agent_domain' => env('CONSTRUCTOR_AGENT_DOMAIN'),
-    'agent_guard' => env('CONSTRUCTOR_AGENT_GUARD', true),
-    'agent_num_result_events' => env('CONSTRUCTOR_AGENT_NUM_RESULT_EVENTS', 5),
-    'agent_num_results_per_event' => env('CONSTRUCTOR_AGENT_NUM_RESULTS_PER_EVENT', 4),
-
-    // Backend Integration (server-side calls on behalf of browser users)
-    'backend_token' => env('CONSTRUCTOR_BACKEND_TOKEN'),       // Falls back to api_token
-    'client_identifier' => env('CONSTRUCTOR_CLIENT_IDENTIFIER'), // Auto-generates if null
-
-    // HTTP Client
-    'timeout' => env('CONSTRUCTOR_TIMEOUT', 30),
-    'retry_times' => env('CONSTRUCTOR_RETRY_TIMES', 2),
-    'retry_sleep' => env('CONSTRUCTOR_RETRY_SLEEP', 100),
-];
-```
-
-## Available Services
-
-| Service | Description |
-|---------|-------------|
-| `ConstructorSandboxSearch` | Search, browse, autocomplete, recommendations, collections |
-| `ConstructorAgentService` | AI Shopping Agent and Product Insights Agent |
-| `ConstructorService` | Catalog uploads, task monitoring, admin operations |
-| `ConstructorEngine` | Laravel Scout engine implementation |
-
-## Error Handling
-
-The package handles errors gracefully:
-
-- **Search errors** return empty `SearchResults` (logged at error level)
-- **Recommendation errors** return empty `RecommendationResults` (logged at error level)
-- **Agent errors** throw exceptions (for UI error handling)
-- **Catalog errors** throw exceptions (for background job handling)
-
-```php
-// Search - gracefully returns empty on error
-$results = Constructor::search('query');
-if ($results->isEmpty()) {
-    // Handle no results (could be error or just no matches)
-}
-
-// Agent - throws on error
-try {
-    $response = $agent->askShoppingAgent($query);
-} catch (\Exception $e) {
-    // Handle error: rate limit, auth failure, network error
-    Log::error('Shopping Agent error: ' . $e->getMessage());
-}
-```
-
-## Troubleshooting
-
-### "Constructor.io configuration not properly set"
-
-Ensure all required environment variables are set:
-```env
-CONSTRUCTOR_API_KEY=your-api-key
-CONSTRUCTOR_API_TOKEN=your-api-token
-```
-
-### Empty results when products should exist
-
-1. **Check API key**: Verify the API key matches your Constructor index
-2. **Check section name**: Default is 'Products', ensure your index uses this
-3. **Check filters**: Some filters may be too restrictive
-4. **View logs**: Check `storage/logs/laravel.log` for API errors
-
-### Facets not returning
-
-- Facets must be configured in the Constructor.io dashboard
-- Not all indexes have facets enabled
-- Try a broader search query to see available facets
-
-### Recommendations returning empty
-
-1. Verify the pod ID exists in your Constructor account
-2. Some pods require `item_id` - use `getItemRecommendations()` instead
-3. Check that the pod has been trained with data
-
-### Agent authentication failures
-
-```
-Constructor Agent API authentication failed. Check your API key and domain configuration.
-```
-
-- Ensure `CONSTRUCTOR_AGENT_DOMAIN` is set correctly
-- The agent domain is separate from the search API key
-
-### Rate limit errors
-
-```
-Rate limit exceeded. Please try again later.
-```
-
-- Implement caching for repeated requests
-- Contact Constructor.io to increase limits for production
-
-## Testing Your Integration
-
-### Artisan Test Command
-
-```bash
-# Test search functionality
-php artisan tinker
->>> Constructor::search('test')->toArray()
-
-# Test recommendations
->>> Constructor::getRecommendations('your-pod-id')->toArray()
-
-# Test agent (if configured)
->>> app(ConstructorAgentService::class)->getProductQuestions('product-id')
-```
-
-### Unit Testing
-
-Mock the facade for testing:
-
-```php
-use ConstructorIO\Laravel\Facades\Constructor;
 use ConstructorIO\Laravel\DataTransferObjects\SearchResults;
+use ConstructorIO\Laravel\Facades\Constructor;
 
-public function test_search_page_displays_products()
-{
-    Constructor::shouldReceive('search')
-        ->once()
-        ->with('shoes', [], \Mockery::any())
-        ->andReturn(new SearchResults(
-            products: [['id' => '1', 'name' => 'Nike Shoes']],
-            total: 1,
-            page: 1,
-            perPage: 24
-        ));
-
-    $response = $this->get('/search?q=shoes');
-
-    $response->assertSee('Nike Shoes');
-}
+Constructor::shouldReceive('search')->andReturn(new SearchResults(
+    products: [['id' => 'TRG-780', 'name' => 'Pro 780']], total: 1, page: 1, perPage: 24,
+));
 ```
 
-## Best Practices
+Or fake the HTTP layer with `Http::fake(['ac.cnstrc.com/*' => Http::response([...])])`.
 
-### Caching Recommendations
+## Configuration reference
 
-```php
-use Illuminate\Support\Facades\Cache;
+Every setting is documented in [`config/constructor.php`](config/constructor.php) and [`.env.example`](.env.example). The main ones:
 
-$recommendations = Cache::remember(
-    "recs:home-page:{$userId}",
-    now()->addMinutes(15),
-    fn() => Constructor::getRecommendations('home-page-1')
-);
-```
+| Env | Default | Purpose |
+|---|---|---|
+| `CONSTRUCTOR_API_KEY` | | Public index key |
+| `CONSTRUCTOR_API_TOKEN` | | Catalog management |
+| `CONSTRUCTOR_BACKEND_TOKEN` | | `x-cnstrc-token` header |
+| `CONSTRUCTOR_CLIENT_IDENTIFIER` | `cio-be-web-{APP_NAME}` | `c` parameter |
+| `CONSTRUCTOR_SECTION` | `Products` | Default index section |
+| `CONSTRUCTOR_GENERATE_CLIENT_ID` | `true` | Create the beacon's client ID cookie on a first visit |
+| `CONSTRUCTOR_SEND_USER_ID` | `true` | Send `auth()->id()` as `ui` |
+| `CONSTRUCTOR_AGENT_DOMAIN` | | AI Shopping Agent domain |
+| `CONSTRUCTOR_TIMEOUT` / `CONSTRUCTOR_STREAM_TIMEOUT` | `10` / `120` | Seconds |
+| `CONSTRUCTOR_RETRY_ATTEMPTS` / `CONSTRUCTOR_RETRY_DELAY` | `2` / `100` | Total attempts / first delay in ms |
+| `CONSTRUCTOR_THROW_EXCEPTIONS` | `false` | Throw on storefront failures |
+| `CONSTRUCTOR_LOG_CHANNEL` | default | Where failures are logged |
+| `CONSTRUCTOR_NOTIFICATION_EMAIL` | | Catalog failure notifications |
+| `CONSTRUCTOR_SCOUT_BATCH_SIZE` | `1000` | Items per Scout sync request |
 
-### User Personalization
+## Upgrading from 1.x
 
-Pass user identifiers for personalized results:
+2.0 fixes the integration to match Constructor's documentation, which changes some behaviour. The 1.x class names still work as deprecated aliases. See **[UPGRADE.md](UPGRADE.md)** for the full list.
 
-```php
-$results = Constructor::search('shoes', [], [
-    'user_id' => auth()->id(),
-    'session_id' => session()->getId(),
-]);
-```
+## Contributing
 
-### Handling Zero-State Gracefully
+See [CONTRIBUTING.md](CONTRIBUTING.md) and [AGENTS.md](AGENTS.md). The repository is set up for [Claude Code](https://claude.com/claude-code): the Constructor docs MCP server, skills and a review subagent are configured in `.mcp.json` and `.claude/`. Run `composer check` before opening a pull request.
 
-```php
-public function autocomplete(Request $request)
-{
-    $query = trim($request->input('q', ''));
-
-    if (empty($query)) {
-        return Constructor::getZeroStateData([
-            'show_top_categories' => true,
-            'recommendation_pod_id' => 'autocomplete-bestsellers',
-        ])->toArray();
-    }
-
-    return Constructor::autocomplete($query)->toArray();
-}
-```
-
-## Documentation
-
-- [Constructor.io Documentation](https://docs.constructor.io/)
-- [Search API Reference](https://docs.constructor.com/reference/search-search-results)
-- [Browse API Reference](https://docs.constructor.com/reference/browse-browse-results)
-- [Autocomplete API Reference](https://docs.constructor.com/reference/autocomplete-autocomplete-results)
-- [Recommendations API Reference](https://docs.constructor.com/reference/recommendations-recommendation-results)
-- [AI Shopping Agent API Reference](https://docs.constructor.com/reference/v1-asa-retrieve-intent)
+Security issues: see [SECURITY.md](SECURITY.md).
 
 ## License
 
-MIT License. See [LICENSE](LICENSE) for details.
+MIT. See [LICENSE](LICENSE).

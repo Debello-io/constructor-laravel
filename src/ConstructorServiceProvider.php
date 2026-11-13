@@ -2,98 +2,93 @@
 
 namespace ConstructorIO\Laravel;
 
-use ConstructorIO\Laravel\Search\ConstructorEngine;
+use ConstructorIO\Laravel\Contracts\SearchProvider;
+use ConstructorIO\Laravel\Http\ApiClient;
+use ConstructorIO\Laravel\Scout\ConstructorEngine;
+use ConstructorIO\Laravel\Services\AgentService;
+use ConstructorIO\Laravel\Services\CatalogService;
 use ConstructorIO\Laravel\Services\ConstructorAgentService;
 use ConstructorIO\Laravel\Services\ConstructorService;
+use ConstructorIO\Laravel\Services\RecommendationService;
 use ConstructorIO\Laravel\Services\Search\ConstructorSandboxSearch;
+use ConstructorIO\Laravel\Services\SearchService;
+use ConstructorIO\Laravel\Support\ConstructorConfig;
+use ConstructorIO\Laravel\Support\RequestContext;
+use Illuminate\Contracts\Foundation\Application;
+use Illuminate\Cookie\Middleware\EncryptCookies;
 use Illuminate\Support\ServiceProvider;
+use Laravel\Scout\EngineManager;
 
+/**
+ * Registers the package's services, the facade target, the published config
+ * and (when Laravel Scout is installed) the "constructor" Scout engine.
+ */
 class ConstructorServiceProvider extends ServiceProvider
 {
-    /**
-     * Register any application services.
-     */
     public function register(): void
     {
-        // Merge config
-        $this->mergeConfigFrom(
-            __DIR__.'/../config/constructor.php',
-            'constructor'
-        );
+        $this->mergeConfigFrom(__DIR__.'/../config/constructor.php', 'constructor');
 
-        $this->mergeConfigFrom(
-            __DIR__.'/../config/constructor-catalog.php',
-            'constructor-catalog'
-        );
+        // Config is read once per application instance. Services are
+        // singletons; per-shopper values are read from the current request on
+        // every call (RequestContext), so this is safe on Octane too.
+        $this->app->singleton(ConstructorConfig::class, fn (Application $app) => ConstructorConfig::fromArray(
+            $app->make('config')->get('constructor', []),
+            (string) $app->make('config')->get('app.name', 'laravel'),
+        ));
 
-        // Register the main Constructor service (catalog management)
-        $this->app->singleton(ConstructorService::class, function ($app) {
-            return new ConstructorService(
-                config('constructor.api_key'),
-                config('constructor.api_token')
-            );
-        });
+        $this->app->singleton(RequestContext::class);
+        $this->app->singleton(ApiClient::class);
+        $this->app->singleton(SearchService::class);
+        $this->app->singleton(RecommendationService::class);
+        $this->app->singleton(AgentService::class);
+        $this->app->singleton(CatalogService::class);
+        $this->app->singleton(Constructor::class);
 
-        // Register the search service
-        $this->app->singleton(ConstructorSandboxSearch::class, function ($app) {
-            return new ConstructorSandboxSearch(
-                config('constructor.api_key'),
-                config('constructor.api_token')
-            );
-        });
+        $this->app->alias(Constructor::class, SearchProvider::class);
+        $this->app->alias(Constructor::class, 'constructor');
 
-        // Register the agent service
-        $this->app->singleton(ConstructorAgentService::class, function ($app) {
-            return new ConstructorAgentService(
-                config('constructor.api_key'),
-                config('constructor.agent_domain')
-            );
-        });
-
-        // Alias for facade
-        $this->app->alias(ConstructorSandboxSearch::class, 'constructor');
+        $this->registerDeprecatedAliases();
     }
 
-    /**
-     * Bootstrap any application services.
-     */
     public function boot(): void
     {
-        // Publish config files
         if ($this->app->runningInConsole()) {
             $this->publishes([
                 __DIR__.'/../config/constructor.php' => config_path('constructor.php'),
-                __DIR__.'/../config/constructor-catalog.php' => config_path('constructor-catalog.php'),
             ], 'constructor-config');
         }
 
-        // Register Scout engine if Scout is available
+        // The beacon's cookies are plain text and read by JavaScript. Stop
+        // Laravel from encrypting the client ID cookie we may set for it.
+        EncryptCookies::except([RequestContext::CLIENT_ID_COOKIE, RequestContext::SESSION_ID_COOKIE]);
+
         $this->registerScoutEngine();
     }
 
     /**
-     * Register the Constructor Scout engine.
+     * Add the "constructor" driver to Scout, if Scout is installed.
      */
     protected function registerScoutEngine(): void
     {
-        // Check if Scout is installed
-        if (! class_exists(\Laravel\Scout\EngineManager::class)) {
+        if (! class_exists(EngineManager::class)) {
             return;
         }
 
-        $this->app->booted(function () {
-            /** @var \Laravel\Scout\EngineManager $manager */
-            $manager = $this->app->make(\Laravel\Scout\EngineManager::class);
-
-            $manager->extend('constructor', function () {
-                return new ConstructorEngine(
-                    new ConstructorService(
-                        config('scout.constructor.api_key', config('constructor.api_key')),
-                        config('scout.constructor.api_token', config('constructor.api_token'))
-                    ),
-                    config('scout.soft_delete', false)
-                );
-            });
+        $this->callAfterResolving(EngineManager::class, function ($manager, Application $app) {
+            $manager->extend('constructor', fn () => $app->make(ConstructorEngine::class, [
+                'softDelete' => (bool) $app->make('config')->get('scout.soft_delete', false),
+            ]));
         });
+    }
+
+    /**
+     * Keep 1.x class names resolvable from the container.
+     */
+    protected function registerDeprecatedAliases(): void
+    {
+        $this->app->alias(Constructor::class, ConstructorSandboxSearch::class);
+        $this->app->alias(AgentService::class, ConstructorAgentService::class);
+        $this->app->alias(CatalogService::class, ConstructorService::class);
     }
 }
