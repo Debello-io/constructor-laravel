@@ -14,6 +14,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - `filterImageResults()` to filter, sort and page image matches through `/browse/items`, as Constructor recommends.
 - `image_search_base_url` setting (`CONSTRUCTOR_IMAGE_SEARCH_BASE_URL`).
 - `ApiClient::postStorefront()` for storefront endpoints that take a raw request body.
+- Artisan commands: `constructor:verify` (checks configuration and credentials without printing secrets), `constructor:upload` (catalog files, with `--wait`) and `constructor:task` (a task's status, with `--wait`).
 
 ## [2.0.0] - 2026-11-13
 
