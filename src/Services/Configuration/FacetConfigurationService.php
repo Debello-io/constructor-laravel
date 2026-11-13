@@ -16,7 +16,9 @@ namespace ConstructorIO\Laravel\Services\Configuration;
  *     ]);
  *
  * A facet has `name`, `path_in_metadata` and `type` (multiple|range|
- * hierarchical), plus display_name, sort_order, sort_descending, range_type,
+ * hierarchical). Range facets also need `range_format` (boundaries for a
+ * slider, options for buckets), and options ranges need `range_limits`.
+ * Optional: display_name, sort_order, sort_descending, range_type,
  * range_format, range_inclusive, range_limits, match_type, position, hidden,
  * protected, countable, options_limit and data. Facet options (values) are
  * managed with FacetOptionService.
@@ -59,8 +61,10 @@ class FacetConfigurationService extends ConfigurationResource
     }
 
     /**
-     * @param  array<string, mixed>  $facet  name, path_in_metadata and type are required.
+     * @param  array<string, mixed>  $facet  name, path_in_metadata and type are required (plus range_format for range facets).
      * @return array<string, mixed> The created facet.
+     *
+     * @see https://docs.constructor.com/reference/v2-facets-create-facet
      */
     public function create(array $facet, ?string $section = null): array
     {
@@ -94,17 +98,26 @@ class FacetConfigurationService extends ConfigurationResource
     /**
      * Overwrite one facet. Fields you leave out are reset; options are kept.
      *
+     * The body is a full facet, so it needs path_in_metadata and type too.
+     * `name` is required in the body as well; it defaults to $facetName.
+     *
      * @param  array<string, mixed>  $facet
      * @return array<string, mixed>
+     *
+     * @see https://docs.constructor.com/reference/v2-facets-replace-facet
      */
     public function replace(string $facetName, array $facet, ?string $section = null): array
     {
-        return $this->write('PUT', $this->path($facetName), $this->section($section), $facet);
+        return $this->write('PUT', $this->path($facetName), $this->section($section), $facet + ['name' => $facetName]);
     }
 
     /**
+     * Change only the fields you pass (every field is optional).
+     *
      * @param  array<string, mixed>  $changes
      * @return array<string, mixed>
+     *
+     * @see https://docs.constructor.com/reference/v2-facets-update-facet
      */
     public function update(string $facetName, array $changes, ?string $section = null): array
     {

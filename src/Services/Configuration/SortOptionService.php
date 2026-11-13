@@ -84,13 +84,21 @@ class SortOptionService extends ConfigurationResource
     }
 
     /**
-     * Overwrite one sort option. Fields you leave out are reset.
+     * Create or overwrite one sort option. Fields you leave out are reset.
+     *
+     * The body may only hold display_name, path_in_metadata, position and
+     * hidden: sort_by and sort_order come from the path, and Constructor
+     * rejects them in the body, so they are dropped if present.
      *
      * @param  array<string, mixed>  $sortOption
      * @return array<string, mixed>
+     *
+     * @see https://docs.constructor.com/reference/v1-sort-options-create-or-replace-sort-option
      */
     public function replace(string $sortBy, string $sortOrder, array $sortOption, ?string $section = null): array
     {
+        unset($sortOption['sort_by'], $sortOption['sort_order']);
+
         return $this->write('PUT', $this->path($sortBy, $sortOrder), $this->section($section), $sortOption);
     }
 

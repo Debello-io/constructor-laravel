@@ -26,22 +26,47 @@ class RefinedQueryService extends ConfigurationResource
 {
     private const RESPONSE_SECTIONS = ['results', 'facets'];
 
+    /** Constructor returns at most 100 refined queries per page. */
+    private const MAX_PER_PAGE = 100;
+
+    /** The `query` filter accepts at most 100 queries. */
+    private const MAX_QUERY_FILTERS = 100;
+
     /**
-     * Options: section, response_section (results|facets), page, per_page,
-     * offset, plus `parameters` for any other filter the endpoint accepts.
+     * Options:
+     *   section, response_section (results|facets)
+     *   queries     list    Only these exact queries (1-100)
+     *   phrase      string  Queries containing this phrase
+     *   sort_by     string  id (default), created_at, updated_at,
+     *                       last_updated_internally, last_updated_externally
+     *   sort_order  string  ascending (default) or descending
+     *   page, per_page (1-100, default 20), offset
      *
      * @param  array<string, mixed>  $options
-     * @return array<string, mixed> Constructor's response.
+     * @return array<string, mixed> ['refined_queries' => [...], 'total_count' => int]
+     *
+     * @see https://docs.constructor.com/reference/v1-searchandising-retrieve-refined-queries
      */
     public function list(array $options = []): array
     {
-        // The reference doesn't state a page-size maximum for this endpoint,
-        // so per_page is only kept at 1 or more.
-        return $this->read('/v1/refined_queries', array_merge(
+        $queries = isset($options['queries']) ? array_values(array_map('strval', (array) $options['queries'])) : null;
+
+        if ($queries !== null && ($queries === [] || count($queries) > self::MAX_QUERY_FILTERS)) {
+            throw new InvalidArgumentException('The queries filter takes 1 to '.self::MAX_QUERY_FILTERS.' queries.');
+        }
+
+        $response = $this->read('/v1/refined_queries', array_merge(
             $this->ruleQuery($options),
-            $this->paging($options, PHP_INT_MAX),
-            (array) ($options['parameters'] ?? []),
+            [
+                'query' => $queries,
+                'phrase' => $options['phrase'] ?? null,
+                'sort_by' => $options['sort_by'] ?? null,
+                'sort_order' => $options['sort_order'] ?? null,
+            ],
+            $this->paging($options, self::MAX_PER_PAGE),
         ));
+
+        return $this->listResponse($response, 'refined_queries');
     }
 
     /**

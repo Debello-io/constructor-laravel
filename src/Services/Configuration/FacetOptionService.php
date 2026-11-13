@@ -64,8 +64,10 @@ class FacetOptionService extends ConfigurationResource
      * Create options that don't exist and partially update those that do,
      * sent 1,000 per request.
      *
-     * The API reference documents the body as a JSON array of options. (The
-     * Facets guide shows an {"options": [...]} wrapper; the reference wins.)
+     * The body is a bare JSON array of options, as the API reference
+     * (v1-facet-options-create-or-update-facet-options) defines it. The
+     * Facets guide's example wraps it in {"options": [...]} instead; the two
+     * disagree, and the reference is followed here.
      *
      * @param  list<array<string, mixed>>  $options
      * @return list<array<string, mixed>> The options as saved.

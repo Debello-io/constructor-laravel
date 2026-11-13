@@ -65,6 +65,8 @@ class RedirectRuleService extends ConfigurationResource
      *
      * @param  array<string, mixed>  $rule  url and matches are required.
      * @return array<string, mixed>
+     *
+     * @see https://docs.constructor.com/reference/v1-redirects-replace-redirect-rule
      */
     public function replace(int|string $ruleId, array $rule): array
     {

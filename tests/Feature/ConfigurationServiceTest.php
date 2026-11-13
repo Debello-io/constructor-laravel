@@ -257,7 +257,7 @@ class ConfigurationServiceTest extends TestCase
             'slot_rules' => [['rule' => ['item_id' => 'TRG-780', 'position' => 1]]],
         ]);
         $refinedQueries->update(5, ['allow_automatic_rules' => false], ['response_section' => 'facets']);
-        $refinedQueries->list(['parameters' => ['query' => 'smoker', 'key' => 'key_attacker']]);
+        $refinedQueries->list(['queries' => ['smoker', 'pellet grill'], 'phrase' => 'smok', 'sort_by' => 'updated_at', 'per_page' => 500]);
 
         [$create, $patch, $list] = $this->sentRequests();
         $this->assertSame(['POST', '/v1/refined_queries'], [$create->method(), $this->pathOf($create)]);
@@ -265,11 +265,53 @@ class ConfigurationServiceTest extends TestCase
         $this->assertArrayNotHasKey('response_section', $this->queryOf($create), 'Constructor defaults to results');
         $this->assertSame(['PATCH', '/v1/refined_queries/5'], [$patch->method(), $this->pathOf($patch)]);
         $this->assertSame(['facets'], $this->queryOf($patch)['response_section']);
-        $this->assertSame(['smoker'], $this->queryOf($list)['query']);
-        $this->assertSame(['key_test'], $this->queryOf($list)['key'], 'parameters can never replace the API key');
+        $this->assertSame(['smoker', 'pellet grill'], $this->queryOf($list)['query'], 'query is a repeated list parameter');
+        $this->assertSame(['smok'], $this->queryOf($list)['phrase']);
+        $this->assertSame(['updated_at'], $this->queryOf($list)['sort_by']);
+        $this->assertSame(['100'], $this->queryOf($list)['num_results_per_page'], 'per_page is capped at 100');
 
         $this->expectException(InvalidArgumentException::class);
         $refinedQueries->get(5, ['response_section' => 'banners']);
+    }
+
+    public function test_refined_query_list_returns_records_and_rejects_too_many_query_filters(): void
+    {
+        Http::fake(['*' => Http::response(['refined_queries' => [['id' => 5, 'query' => 'smoker']], 'total_count' => 1])]);
+        $refinedQueries = $this->configuration()->refinedQueries();
+
+        $list = $refinedQueries->list();
+
+        $this->assertSame(['refined_queries' => [['id' => 5, 'query' => 'smoker']], 'total_count' => 1], $list);
+
+        $this->expectException(InvalidArgumentException::class);
+        $refinedQueries->list(['queries' => array_fill(0, 101, 'grill')]);
+    }
+
+    public function test_sort_option_replace_keeps_sort_by_and_sort_order_out_of_the_body(): void
+    {
+        Http::fake(['*' => Http::response(['sort_by' => 'price', 'sort_order' => 'ascending'])]);
+
+        $this->configuration()->sortOptions()->replace('price', 'ascending', [
+            'sort_by' => 'price',
+            'sort_order' => 'ascending',
+            'path_in_metadata' => 'data.price',
+            'display_name' => 'Price: Low to High',
+        ]);
+
+        [$put] = $this->sentRequests();
+        $this->assertSame(['PUT', '/v1/sort_option/price/ascending'], [$put->method(), $this->pathOf($put)]);
+        $this->assertSame(['path_in_metadata' => 'data.price', 'display_name' => 'Price: Low to High'], $put->data());
+    }
+
+    public function test_facet_replace_sends_a_full_facet_including_its_name(): void
+    {
+        Http::fake(['*' => Http::response(['name' => 'brand'])]);
+
+        $this->configuration()->facets()->replace('brand', ['path_in_metadata' => 'facets.brand', 'type' => 'multiple']);
+
+        [$put] = $this->sentRequests();
+        $this->assertSame(['PUT', '/v2/facets/brand'], [$put->method(), $this->pathOf($put)]);
+        $this->assertSame(['path_in_metadata' => 'facets.brand', 'type' => 'multiple', 'name' => 'brand'], $put->data());
     }
 
     public function test_reads_are_retried_but_writes_are_not(): void
