@@ -79,32 +79,29 @@ When your server calls Constructor on behalf of a shopper, Constructor still has
 Your part:
 
 1. **Load the Constructor beacon on every page.** It sets the cookies above and sends the behavioral events (clicks, add to cart, purchases) that Constructor learns from. This package does not send tracking events.
-2. **Expose the tracking data on the page.** The beacon reads it from data attributes. On search and browse pages, also add the `cnstrc-data` script tag:
+2. **Expose the tracking data on the page.** The beacon reads it from `data-cnstrc-*` attributes. The package's Blade components write them for you, escaped, and add the `cnstrc-data` script tag search and browse pages also need:
    ```blade
-   <div data-cnstrc-search
-        data-cnstrc-search-term="{{ $query }}"
-        data-cnstrc-section="Products"
-        data-cnstrc-result-id="{{ $results->resultId }}"
-        data-cnstrc-num-results="{{ $results->total }}"
-        data-cnstrc-result-page="{{ $results->page }}">
+   <x-constructor::search-results :results="$results" :term="$query" class="grid">
        @foreach ($results->products as $product)
-           <div data-cnstrc-item-id="{{ $product['id'] }}"
-                data-cnstrc-item-name="{{ $product['name'] }}"
-                @if ($product['variation_id']) data-cnstrc-item-variation-id="{{ $product['variation_id'] }}" @endif
-                @if ($product['price']) data-cnstrc-item-price="{{ $product['price'] }}" @endif
-                @if ($product['is_sponsored'])
-                    data-cnstrc-sl-campaign-id="{{ $product['sponsored_campaign_id'] }}"
-                    data-cnstrc-sl-campaign-owner="{{ $product['sponsored_campaign_owner'] }}"
-                @endif>
-               ...
-               <button data-cnstrc-btn="add_to_cart">Add to cart</button>
-           </div>
+           <x-constructor::item :product="$product" class="card">
+               <a href="{{ $product['url'] }}">{{ $product['name'] }}</a>
+               @if ($product['is_sponsored']) <span>Sponsored</span> @endif
+               <x-constructor::button action="add_to_cart">Add to cart</x-constructor::button>
+           </x-constructor::item>
        @endforeach
-   </div>
-
-   <script id="cnstrc-data" type="application/json">@json($results->trackingData())</script>
+   </x-constructor::search-results>
    ```
-   Browse pages use `data-cnstrc-browse` with `data-cnstrc-filter-name` / `data-cnstrc-filter-value` instead of the search term. Recommendation widgets use `data-cnstrc-recommendations`. See [Data-driven event tracking](https://docs.constructor.com/docs/integrating-with-constructor-behavioral-tracking-data-driven-event-tracking) and the [User Guide](docs/USER_GUIDE.md#11-behavioral-tracking).
+   | Component | Use it for |
+   |---|---|
+   | `<x-constructor::search-results :results :term>` | Search results (adds the `cnstrc-data` tag) |
+   | `<x-constructor::browse-results :results filter-name filter-value>` | Category, brand and collection pages (adds the `cnstrc-data` tag) |
+   | `<x-constructor::item :product>` | Each result: ID, name, variation, price, Sponsored Listing campaign |
+   | `<x-constructor::recommendations :results :seed-items>` | A recommendation pod; `<x-constructor::recommendation-item :product>` for each item |
+   | `<x-constructor::quiz-results :results>` | Quiz results |
+   | `<x-constructor::product-detail :product>` | A product page (add `modal` for a quick view) |
+   | `<x-constructor::button action>` | Add to cart and other conversions |
+
+   Every component takes a `tag` (default `div`) and passes other attributes through; set a `data-cnstrc-*` attribute yourself to override a computed one, e.g. the variation ID after a swatch change. Not using Blade? See the raw markup in the [User Guide](docs/USER_GUIDE.md#pass-result_id-to-the-page), and [Data-driven event tracking](https://docs.constructor.com/docs/integrating-with-constructor-behavioral-tracking-data-driven-event-tracking).
 3. **Configure [trusted proxies](https://laravel.com/docs/requests#configuring-trusted-proxies)** if you're behind a load balancer or CDN. Otherwise every request appears to come from the proxy's IP.
 4. **Respect consent.** If a shopper hasn't consented to personalization, the client ID must be omitted:
    ```php

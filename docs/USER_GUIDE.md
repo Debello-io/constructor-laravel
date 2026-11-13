@@ -220,7 +220,46 @@ Then check a live request: the IP Constructor receives must be the shopper's, no
 
 ### Pass `result_id` to the page
 
-Every search, browse, autocomplete and recommendation response includes a `result_id`. The beacon's "results loaded" event must carry it, or Constructor cannot connect what shoppers did to what it returned. Mark up the results container and each result as [Data-driven event tracking](https://docs.constructor.com/docs/integrating-with-constructor-behavioral-tracking-data-driven-event-tracking) describes. On a search page:
+Every search, browse, autocomplete and recommendation response includes a `result_id`. The beacon's "results loaded" event must carry it, or Constructor cannot connect what shoppers did to what it returned. Mark up the results container and each result as [Data-driven event tracking](https://docs.constructor.com/docs/integrating-with-constructor-behavioral-tracking-data-driven-event-tracking) describes.
+
+The package's Blade components do this for you. On a search page:
+
+```blade
+<x-constructor::search-results :results="$results" :term="$query" class="results-grid">
+    @foreach ($results->products as $product)
+        <x-constructor::item :product="$product" class="result">
+            <a href="{{ $product['url'] }}">{{ $product['name'] }}</a>
+            <x-constructor::button action="add_to_cart">Add to cart</x-constructor::button>
+        </x-constructor::item>
+    @endforeach
+</x-constructor::search-results>
+```
+
+On a browse (category) page, name the filter you browsed by, exactly as you passed it to `browse()`:
+
+```blade
+<x-constructor::browse-results :results="$results" filter-name="group_id" :filter-value="$category">
+    {{-- the same <x-constructor::item> elements --}}
+</x-constructor::browse-results>
+```
+
+What the components take care of:
+
+| Component | Renders |
+|-----------|---------|
+| `search-results` | `data-cnstrc-search`, the term, section, `result_id`, result count and page, then the `cnstrc-data` script tag |
+| `browse-results` | `data-cnstrc-browse`, the section, `result_id`, count, page, filter name and value, then the `cnstrc-data` script tag |
+| `tracking-data` | Only the `cnstrc-data` script tag, for when you pass `:with-tracking-data="false"` to a container |
+| `item` | Item ID, name, face-out variation ID, price, and the Sponsored Listing campaign ID and owner |
+| `recommendations`, `recommendation-item` | A recommendation pod and its items; see [Strategy and tracking](#strategy-and-tracking) |
+| `quiz-results` | A quiz's results; see [Tracking quiz results](#tracking-quiz-results) |
+| `product-detail` | A product page (`data-cnstrc-product-detail`), or a quick view with `modal` |
+| `generic-results` | A product list Constructor didn't produce, with `:total` |
+| `button` | A conversion button, `data-cnstrc-btn` (`action="add_to_cart"` by default; also `add_to_wishlist`, `like`, `message`, `make_offer`, `read` or your own) |
+
+Every component takes a `tag` (`div` by default, `button` for the button) and passes your other attributes through: `class` is appended, and a `data-cnstrc-*` attribute you set replaces the computed one. All values are escaped, and the `cnstrc-data` JSON can't break out of its `<script>` tag. `section` defaults to `CONSTRUCTOR_SECTION`; pass `section="..."` for a custom section. To change the markup, publish the views with `php artisan vendor:publish --tag=constructor-views`.
+
+Without the components, the same search page looks like this:
 
 ```blade
 <div data-cnstrc-search
@@ -243,26 +282,15 @@ Every search, browse, autocomplete and recommendation response includes a `resul
 <script id="cnstrc-data" type="application/json">@json($results->trackingData())</script>
 ```
 
-The rules that are easy to miss:
+A browse page uses `data-cnstrc-browse` instead, without the search term, plus `data-cnstrc-filter-name="group_id"` and `data-cnstrc-filter-value="{{ $category }}"`.
 
+The rules that are easy to miss (the components follow all of them):
+
+- `data-cnstrc-section` is always present, even for `Products`.
 - `data-cnstrc-num-results` is `0` on a page with no results (keep the other attributes). Leave it out while results are still loading, so the beacon doesn't record an empty page too early.
 - `data-cnstrc-item-variation-id` defaults to the product's `variation_id`. Update it when the shopper picks a different swatch.
 - `data-cnstrc-item-price` is the lower of the sale price and the list price. Leave it out when an item has no price; never send `0` or an empty value.
-- The `cnstrc-data` script tag holds Constructor's `request` object and the `result_id` (`SearchResults::trackingData()`). Put it on search and browse result pages only. `@json` escapes the output so it can't break out of the tag.
-
-A browse (category) page uses `data-cnstrc-browse` and names the filter instead of a search term:
-
-```blade
-<div data-cnstrc-browse
-     data-cnstrc-section="Products"
-     data-cnstrc-result-id="{{ $results->resultId }}"
-     data-cnstrc-num-results="{{ $results->total }}"
-     data-cnstrc-result-page="{{ $results->page }}"
-     data-cnstrc-filter-name="group_id"
-     data-cnstrc-filter-value="{{ $category }}">
-    {{-- same result items as above --}}
-</div>
-```
+- The `cnstrc-data` script tag holds Constructor's `request` object and the `result_id` (`SearchResults::trackingData()`). Put it on search and browse result pages only, and only when Constructor returned the results (the components skip it when there's no `result_id`, for example after a failure). `@json` escapes the output so it can't break out of the tag.
 
 Recommendations have their own attributes; see [Strategy and tracking](#strategy-and-tracking). Sponsored results need two more; see [Sponsored and promoted results](#sponsored-and-promoted-results).
 
@@ -473,20 +501,15 @@ $product['_raw']['cooking_area_sq_in'] ?? null;
 
 When `is_slotted` is true, a merchandising rule pinned the product in place. That is not an advertisement.
 
-When `is_sponsored` is true, the product is a [Sponsored Listing](https://docs.constructor.com/docs/products-retail-media-learn-about-sponsored-listings-implement-sponsored-listings): Constructor flags it with `labels.is_retail_media` (some response docs use `labels.is_sponsored`; the package checks both). Show a "Sponsored" badge (your region may have legal requirements for the wording), and put the campaign details on the result element so the beacon can attribute the ad's views and clicks:
+When `is_sponsored` is true, the product is a [Sponsored Listing](https://docs.constructor.com/docs/products-retail-media-learn-about-sponsored-listings-implement-sponsored-listings): Constructor flags it with `labels.is_retail_media` (some response docs use `labels.is_sponsored`; the package checks both). Show a "Sponsored" badge (your region may have legal requirements for the wording), and put the campaign details on the result element so the beacon can attribute the ad's views and clicks. `<x-constructor::item>` adds `data-cnstrc-sl-campaign-id` and `data-cnstrc-sl-campaign-owner` whenever the product has them:
 
 ```blade
-<div data-cnstrc-item-id="{{ $product['id'] }}"
-     data-cnstrc-item-name="{{ $product['name'] }}"
-     @if ($product['is_sponsored'])
-         data-cnstrc-sl-campaign-id="{{ $product['sponsored_campaign_id'] }}"
-         data-cnstrc-sl-campaign-owner="{{ $product['sponsored_campaign_owner'] }}"
-     @endif>
+<x-constructor::item :product="$product">
     @if ($product['is_sponsored'])
         <span class="badge">Sponsored</span>
     @endif
     ...
-</div>
+</x-constructor::item>
 ```
 
 If you use a third-party retail media platform through Constructor, its tracking properties are in `$product['labels']`.
@@ -1219,30 +1242,41 @@ $fallback = Constructor::getRecommendations('no-results', ['term' => $query]);
 
 ### Strategy and tracking
 
-Each recommended product includes the `strategy` that picked it. The beacon needs the pod ID, `resultId`, the number of results and the seed item IDs (comma-separated, for item-based pods) on the container, and the strategy on each item:
+Each recommended product includes the `strategy` that picked it. The beacon needs the pod ID, `resultId`, the number of results and the seed item IDs (for item-based pods) on the container, and the strategy on each item. The components write all of it:
+
+```blade
+<x-constructor::recommendations :results="$accessories" seed-items="TRG-PRO780" tag="section">
+    <h2>{{ $accessories->title }}</h2>
+    @foreach ($accessories->products as $product)
+        <x-constructor::recommendation-item :product="$product">
+            <a href="{{ $product['url'] }}">{{ $product['name'] }}</a>
+            <x-constructor::button action="add_to_cart">Add to cart</x-constructor::button>
+        </x-constructor::recommendation-item>
+    @endforeach
+</x-constructor::recommendations>
+```
+
+`seed-items` takes one ID or a list, e.g. `:seed-items="$cartItemIds"` for a cart pod; it's sent comma-separated. Leave it out for pods that don't use an item (best sellers, trending). When a pod fills a zero-state search box, add `section="Products"` (or `section="Search Suggestions"`) to each `recommendation-item`.
+
+The rendered markup, if you write it by hand:
 
 ```blade
 <section data-cnstrc-recommendations
          data-cnstrc-recommendations-pod-id="{{ $accessories->podId }}"
          data-cnstrc-result-id="{{ $accessories->resultId }}"
-         data-cnstrc-num-results="{{ $accessories->count() }}"
+         data-cnstrc-num-results="{{ $accessories->total }}"
          data-cnstrc-recommendations-seed-items="TRG-PRO780">
-    <h2>{{ $accessories->title }}</h2>
-    @foreach ($accessories->products as $product)
-        <div data-cnstrc-item="recommendation"
-             data-cnstrc-item-id="{{ $product['id'] }}"
-             data-cnstrc-item-name="{{ $product['name'] }}"
-             @if ($product['variation_id']) data-cnstrc-item-variation-id="{{ $product['variation_id'] }}" @endif
-             data-cnstrc-strategy-id="{{ $product['strategy']['id'] ?? '' }}"
-             @if ($price = $product['price']) data-cnstrc-item-price="{{ $price }}" @endif>
-            <a href="{{ $product['url'] }}">{{ $product['name'] }}</a>
-            <button type="button" data-cnstrc-btn="add_to_cart">Add to cart</button>
-        </div>
-    @endforeach
+    <div data-cnstrc-item="recommendation"
+         data-cnstrc-item-id="{{ $product['id'] }}"
+         data-cnstrc-item-name="{{ $product['name'] }}"
+         data-cnstrc-strategy-id="{{ $product['strategy']['id'] }}"
+         data-cnstrc-item-price="{{ $product['price'] }}">
+        ...
+    </div>
 </section>
 ```
 
-For a cart pod seeded with several items, join them: `data-cnstrc-recommendations-seed-items="{{ implode(',', $cartItemIds) }}"`. As with search results, `data-cnstrc-item-price` is the lower of sale and list price, and is left out when there's no price. See [Data-driven event tracking](https://docs.constructor.com/docs/integrating-with-constructor-behavioral-tracking-data-driven-event-tracking#recommendations).
+As with search results, `data-cnstrc-item-variation-id` is only set for a face-out variation, and `data-cnstrc-item-price` is the lower of sale and list price, left out when there's no price. See [Data-driven event tracking](https://docs.constructor.com/docs/integrating-with-constructor-behavioral-tracking-data-driven-event-tracking#recommendations).
 
 ### A Blade component
 
@@ -1269,6 +1303,21 @@ class Recommendations extends Component
         return view('components.recommendations', ['recommendations' => $recommendations]);
     }
 }
+```
+
+`resources/views/components/recommendations.blade.php`:
+
+```blade
+@if ($recommendations->hasRecommendations())
+    <x-constructor::recommendations :results="$recommendations" :seed-items="$itemId" tag="section">
+        <h2>{{ $recommendations->title }}</h2>
+        @foreach ($recommendations->products as $product)
+            <x-constructor::recommendation-item :product="$product">
+                <a href="{{ $product['url'] }}">{{ $product['name'] }}</a>
+            </x-constructor::recommendation-item>
+        @endforeach
+    </x-constructor::recommendations>
+@endif
 ```
 
 ```blade
@@ -1305,28 +1354,21 @@ Every option applies to all pods (`item_id`, `variation_id`, `term`, `filters`, 
 
 ```blade
 @foreach ($page->podsWithResults() as $pod)
-    <section data-cnstrc-recommendations
-             data-cnstrc-recommendations-pod-id="{{ $pod->podId }}"
-             data-cnstrc-result-id="{{ $pod->resultId }}"
-             data-cnstrc-num-results="{{ $pod->count() }}"
-             data-cnstrc-recommendations-seed-items="TRG-PRO780">
+    {{-- $itemBasedPods: the pod IDs on this page whose strategy uses the item --}}
+    <x-constructor::recommendations :results="$pod" tag="section"
+        :seed-items="in_array($pod->podId, $itemBasedPods, true) ? 'TRG-PRO780' : null">
         <h2>{{ $pod->title }}</h2>
         @foreach ($pod->products as $product)
-            <div data-cnstrc-item="recommendation"
-                 data-cnstrc-item-id="{{ $product['id'] }}"
-                 data-cnstrc-item-name="{{ $product['name'] }}"
-                 @if ($product['variation_id']) data-cnstrc-item-variation-id="{{ $product['variation_id'] }}" @endif
-                 data-cnstrc-strategy-id="{{ $product['strategy']['id'] ?? '' }}"
-                 @if ($price = $product['price']) data-cnstrc-item-price="{{ $price }}" @endif>
+            <x-constructor::recommendation-item :product="$product">
                 <a href="{{ $product['url'] }}">{{ $product['name'] }}</a>
-                <button type="button" data-cnstrc-btn="add_to_cart">Add to cart</button>
-            </div>
+                <x-constructor::button action="add_to_cart">Add to cart</x-constructor::button>
+            </x-constructor::recommendation-item>
         @endforeach
-    </section>
+    </x-constructor::recommendations>
 @endforeach
 ```
 
-Leave out `data-cnstrc-recommendations-seed-items` for pods whose strategy doesn't use the item (best sellers, recently viewed). If the request fails, you get an empty page (logged), and `$page->isEmpty()` is true.
+Leave out the seed items for pods whose strategy doesn't use the item (best sellers, recently viewed). If the request fails, you get an empty page (logged), and `$page->isEmpty()` is true.
 
 ---
 
@@ -1561,10 +1603,23 @@ Constructor ranks and personalizes results by learning from shopper behavior. **
 
 What the server side must do:
 
-1. **Expose `result_id`** from every search, browse, autocomplete and recommendation response to the page, as shown in [section 2](#pass-result_id-to-the-page). It is required on results-loaded events. On search and browse pages, also add the `cnstrc-data` script tag with `@json($results->trackingData())`.
+1. **Expose `result_id`** from every search, browse, autocomplete and recommendation response to the page, as shown in [section 2](#pass-result_id-to-the-page). It is required on results-loaded events. On search and browse pages, also add the `cnstrc-data` script tag (`<x-constructor::search-results>` and `<x-constructor::browse-results>` add it; by hand, `@json($results->trackingData())`).
 2. **Use the same client and session IDs as the beacon.** The package does this by reading the beacon's cookies (see [section 2](#shopper-identity-what-is-sent-with-each-request)).
 3. **Mark up results** with item ID, name, variation ID and price (`data-cnstrc-item-*`), and conversion buttons with `data-cnstrc-btn="add_to_cart"`, so clicks and add-to-cart events can be attributed. Recommendations also need `data-cnstrc-item="recommendation"` and `data-cnstrc-strategy-id` ([section 8](#strategy-and-tracking)).
 4. **Sponsored results** need `data-cnstrc-sl-campaign-id` and `data-cnstrc-sl-campaign-owner` ([section 3](#sponsored-and-promoted-results)).
+5. **Product pages** need `data-cnstrc-product-detail` with the item ID, name, variation and price on the detail container (`data-cnstrc-product-detail-modal` for a quick view).
+
+The `<x-constructor::...>` Blade components handle points 1, 3, 4 and 5 (see [section 2](#pass-result_id-to-the-page)):
+
+```blade
+<x-constructor::product-detail :product="$product">
+    <h1>{{ $product['name'] }}</h1>
+    <x-constructor::button action="add_to_cart">Add to cart</x-constructor::button>
+    <x-constructor::button action="add_to_wishlist">Save</x-constructor::button>
+</x-constructor::product-detail>
+```
+
+`product` can be a result from any results DTO or a catalog item from `Constructor::catalog()->getItem()`. Add `modal` for a quick-view dialog.
 
 For AI agent results, track agent views and clicks with the JavaScript client's `trackAgent*` methods, using the `intent_result_id` and per-product `result_id` returned by `askShoppingAgent()`.
 
@@ -2081,23 +2136,17 @@ $results->filterExpression;    // the filter Constructor built from the answers
 Put the quiz IDs and `resultId` on the results container so the beacon can attribute clicks and add-to-carts ([Data-driven event tracking](https://docs.constructor.com/docs/integrating-with-constructor-behavioral-tracking-data-driven-event-tracking)):
 
 ```blade
-<div data-cnstrc-quizzes
-     data-cnstrc-quiz-id="{{ $results->quizId }}"
-     data-cnstrc-quiz-version-id="{{ $results->quizVersionId }}"
-     data-cnstrc-quiz-session-id="{{ $results->quizSessionId }}"
-     data-cnstrc-result-id="{{ $results->resultId }}"
-     data-cnstrc-num-results="{{ $results->total }}">
+<x-constructor::quiz-results :results="$results">
     @foreach ($results->products as $product)
-        <div data-cnstrc-item-id="{{ $product['id'] }}"
-             data-cnstrc-item-name="{{ $product['name'] }}"
-             @if ($product['variation_id']) data-cnstrc-item-variation-id="{{ $product['variation_id'] }}" @endif
-             @if ($product['price']) data-cnstrc-item-price="{{ $product['price'] }}" @endif>
+        <x-constructor::item :product="$product">
             ...
-            <button data-cnstrc-btn="add_to_cart">Add to cart</button>
-        </div>
+            <x-constructor::button action="add_to_cart">Add to cart</x-constructor::button>
+        </x-constructor::item>
     @endforeach
-</div>
+</x-constructor::quiz-results>
 ```
+
+The container gets `data-cnstrc-quizzes` with `data-cnstrc-quiz-id`, `data-cnstrc-quiz-version-id`, `data-cnstrc-quiz-session-id`, `data-cnstrc-result-id` and `data-cnstrc-num-results`, from the `QuizResults` you pass.
 
 ### A quiz controller
 

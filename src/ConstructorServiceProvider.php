@@ -28,13 +28,14 @@ use ConstructorIO\Laravel\Support\ResponseCache;
 use Illuminate\Contracts\Foundation\Application;
 use Illuminate\Cookie\Middleware\EncryptCookies;
 use Illuminate\Support\ServiceProvider;
+use Illuminate\View\Compilers\BladeCompiler;
 use Laravel\Scout\EngineManager;
 use Laravel\Scout\Engines\Engine;
 
 /**
  * Registers the package's services, the facade target, the published config,
- * the Artisan commands and (when Laravel Scout is installed) the
- * "constructor" Scout engine.
+ * the Artisan commands, the <x-constructor::...> tracking components and
+ * (when Laravel Scout is installed) the "constructor" Scout engine.
  */
 class ConstructorServiceProvider extends ServiceProvider
 {
@@ -77,6 +78,10 @@ class ConstructorServiceProvider extends ServiceProvider
                 __DIR__.'/../config/constructor.php' => config_path('constructor.php'),
             ], 'constructor-config');
 
+            $this->publishes([
+                __DIR__.'/../resources/views' => resource_path('views/vendor/constructor'),
+            ], 'constructor-views');
+
             $this->commands([
                 VerifyCommand::class,
                 UploadCommand::class,
@@ -88,7 +93,21 @@ class ConstructorServiceProvider extends ServiceProvider
         // Laravel from encrypting the client ID cookie we may set for it.
         EncryptCookies::except([RequestContext::CLIENT_ID_COOKIE, RequestContext::SESSION_ID_COOKIE]);
 
+        $this->registerTrackingComponents();
         $this->registerScoutEngine();
+    }
+
+    /**
+     * The <x-constructor::...> Blade components that render the beacon's
+     * tracking attributes. Registered only once Blade is in use.
+     */
+    protected function registerTrackingComponents(): void
+    {
+        $this->loadViewsFrom(__DIR__.'/../resources/views', 'constructor');
+
+        $this->callAfterResolving(BladeCompiler::class, function (BladeCompiler $blade) {
+            $blade->componentNamespace('ConstructorIO\\Laravel\\View\\Components', 'constructor');
+        });
     }
 
     /**

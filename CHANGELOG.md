@@ -18,6 +18,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Product details: `Constructor::productDetails()` with `getItem()`, `getItems()` (up to 20) and `getVariations()` (up to 100), returning enriched attributes and badges from `product-details.cnstrc.com`.
 - Shopper preferences: `Constructor::preferences()` with `setForCurrentUser()` (respects consent and the storefront `ui`), `setUserPreference()`, `setPreferences()` (100 per request) and `uploadPreferencesFile()` for the User profile API.
 - Settings: `product_details_base_url`, `user_profile_base_url` and `user_profile_token` (Bearer token for preferences; defaults to `api_token`).
+- Blade components that render the beacon's tracking markup: `<x-constructor::search-results>`, `browse-results`, `tracking-data`, `item`, `recommendations`, `recommendation-item`, `quiz-results`, `product-detail`, `generic-results` and `button`. They write every documented `data-cnstrc-*` attribute, escaped, and add the `cnstrc-data` script tag on search and browse pages (only when Constructor returned the results). Views can be published with `--tag=constructor-views`.
 
 ## [2.0.0] - 2026-11-13
 
