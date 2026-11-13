@@ -432,6 +432,24 @@ Requires Laravel Scout 11. The item ID is the model's Scout key. Without `Constr
 - With `scout.soft_delete`, items carry `data.__soft_deleted` (`"0"`/`"1"`); configure `__soft_deleted` as a hidden facet in Constructor so Scout's filter works.
 - Most retailers sync the catalog with file uploads and use Scout only for incremental updates.
 
+### Caching
+
+Category menus, facet lists and collections are the same for every shopper, so you can cache them. It's off by default:
+
+```env
+CONSTRUCTOR_CACHE_ENABLED=true
+CONSTRUCTOR_CACHE_TTL=600            # seconds
+CONSTRUCTOR_CACHE_TTL_CATEGORIES=3600
+```
+
+```php
+Constructor::getBrowseGroups();                     // cached
+Constructor::getBrowseGroups(['cache' => false]);   // always asks Constructor
+Constructor::flushCache();                          // after changing categories or facets in the dashboard
+```
+
+Cached: `getBrowseGroups()`, `getAvailableFacets()`, `getFacetsWithOptions()`, `getFacetValuesWithImages()`, `getCollections()` and `getCollection()`. Search, browse, autocomplete, recommendations, quizzes and the agents are personalized and never cached. Failures are never cached, and user segments and other options get their own entries. See the [User Guide](docs/USER_GUIDE.md#the-built-in-response-cache).
+
 ## Error handling
 
 | Call | On failure |
@@ -490,6 +508,9 @@ Every setting is documented in [`config/constructor.php`](config/constructor.php
 | `CONSTRUCTOR_CATALOG_BATCHING_BASE_URL` | `https://batching.catalog.cnstrc.com` | Catalog Batching Service host |
 | `CONSTRUCTOR_SCOUT_SYNC_MODE` | `replace` | `replace` or `patch` model saves |
 | `CONSTRUCTOR_QUIZZES_BASE_URL` | `https://quizzes.cnstrc.com` | Quizzes host (https only) |
+| `CONSTRUCTOR_CACHE_ENABLED` | `false` | Cache category, facet and collection responses |
+| `CONSTRUCTOR_CACHE_STORE` / `CONSTRUCTOR_CACHE_PREFIX` | default store / `constructor` | Where cached responses go |
+| `CONSTRUCTOR_CACHE_TTL` | `600` | Seconds to keep a cached response; `CONSTRUCTOR_CACHE_TTL_CATEGORIES`, `_FACETS` and `_COLLECTIONS` override it per type |
 
 ## Upgrading from 1.x
 

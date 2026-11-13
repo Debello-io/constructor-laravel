@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+- Opt-in response cache for non-personalized reads: `getBrowseGroups()`, `getAvailableFacets()`, `getFacetsWithOptions()`, `getFacetValuesWithImages()`, `getCollections()` and `getCollection()`. Settings under `constructor.cache` (`CONSTRUCTOR_CACHE_*`); `'cache' => false` skips it for one call; `Constructor::flushCache()` empties it on any cache store. Failures are never cached.
+- `getCollection()` and `getFacetValuesWithImages()` accept an `$options` array (currently just `cache`).
+
 ## [2.0.0] - 2026-11-13
 
 A full review against Constructor's API reference and backend-integration documentation. See [UPGRADE.md](UPGRADE.md).

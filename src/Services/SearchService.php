@@ -2,6 +2,7 @@
 
 namespace ConstructorIO\Laravel\Services;
 
+use ConstructorIO\Laravel\Concerns\CachesResponses;
 use ConstructorIO\Laravel\Concerns\HandlesStorefrontFailures;
 use ConstructorIO\Laravel\DataTransferObjects\AutocompleteResults;
 use ConstructorIO\Laravel\DataTransferObjects\SearchResults;
@@ -10,6 +11,7 @@ use ConstructorIO\Laravel\Http\ApiClient;
 use ConstructorIO\Laravel\Http\Path;
 use ConstructorIO\Laravel\Support\ConstructorConfig;
 use ConstructorIO\Laravel\Support\ParameterBuilder;
+use ConstructorIO\Laravel\Support\ResponseCache;
 use ConstructorIO\Laravel\Support\ResultTransformer;
 
 /**
@@ -28,6 +30,7 @@ use ConstructorIO\Laravel\Support\ResultTransformer;
  */
 class SearchService
 {
+    use CachesResponses;
     use HandlesStorefrontFailures;
 
     /** Constructor limits autocomplete prefixes to 200 characters. */
@@ -50,12 +53,17 @@ class SearchService
 
     protected readonly ConstructorConfig $config;
 
+    protected readonly ResponseCache $responseCache;
+
     public function __construct(
         protected readonly ApiClient $api,
         protected readonly ResultTransformer $transformer,
         protected readonly RecommendationService $recommendations,
+        ?ResponseCache $responseCache = null,
     ) {
         $this->config = $api->config();
+        // Optional so code that builds the service by hand keeps working.
+        $this->responseCache = $responseCache ?? new ResponseCache($this->config, app('cache'));
     }
 
     /**
@@ -269,12 +277,14 @@ class SearchService
      * Every facet configured for the index, without options.
      * For building "Shop by ..." navigation.
      *
-     * @param  array<string, mixed>  $options  section, fmt_options (e.g. show_hidden_facets)
+     * Cached when CONSTRUCTOR_CACHE_ENABLED=true; pass 'cache' => false to skip it.
+     *
+     * @param  array<string, mixed>  $options  section, fmt_options (e.g. show_hidden_facets), cache
      * @return list<array{name: string, display_name: string, type: string}>
      */
     public function getAvailableFacets(array $options = []): array
     {
-        return $this->attempt('getAvailableFacets', function () use ($options) {
+        return $this->cached('getAvailableFacets', 'facets', $options, fn () => $this->attempt('getAvailableFacets', function () use ($options) {
             $parameters = $this->sectionParameters($options) + [
                 // The endpoint pages its results (20 by default); ask for all of them.
                 'num_results_per_page' => self::MAX_FACETS_PER_REQUEST,
@@ -304,7 +314,7 @@ class SearchService
             }
 
             return $facets;
-        }, fn () => []);
+        }, fn () => []));
     }
 
     /**
@@ -327,6 +337,7 @@ class SearchService
      *   fmt_options    array   show_hidden_facets, hidden_facets, show_hidden_facet_options, show_protected_facets
      *   user_segments  list    Segments (`us`)
      *   parameters     array   Any other API parameter, passed through as-is
+     *   cache          bool    false skips the response cache (when enabled)
      * plus the shopper identity overrides described on ParameterBuilder.
      *
      * @see https://docs.constructor.com/reference/v1-browse-get-browse-facets-with-options
@@ -342,7 +353,7 @@ class SearchService
 
         $empty = fn () => ['facets' => [], 'total' => 0, 'page' => $page, 'per_page' => $perPage, 'has_more' => false, 'result_id' => null];
 
-        return $this->attempt('getFacetsWithOptions', function () use ($options, $perPage, $offset, $page) {
+        return $this->cached('getFacetsWithOptions', 'facets', $options, fn () => $this->attempt('getFacetsWithOptions', function () use ($options, $perPage, $offset, $page) {
             $parameters = $this->sectionParameters($options) + ['num_results_per_page' => $perPage];
 
             // The API rejects page and offset together.
@@ -376,7 +387,7 @@ class SearchService
                 'has_more' => $skipped + $perPage < $total,
                 'result_id' => $response['result_id'] ?? null,
             ];
-        }, $empty);
+        }, $empty));
     }
 
     /**
@@ -384,13 +395,16 @@ class SearchService
      *
      * The image comes from the option's `image_url` data field when you set
      * one in the dashboard. Otherwise one extra browse request per option
-     * finds a product image, so keep $maxItems small or cache the result.
+     * finds a product image, so keep $maxItems small, or enable the response
+     * cache (CONSTRUCTOR_CACHE_ENABLED=true). A cached list shows every shopper
+     * the same image per option.
      *
+     * @param  array<string, mixed>  $options  cache (false skips the response cache)
      * @return list<array{value: string, display_name: string, count: int, image: string|null}>
      */
-    public function getFacetValuesWithImages(string $facetName, int $maxItems = 10): array
+    public function getFacetValuesWithImages(string $facetName, int $maxItems = 10, array $options = []): array
     {
-        return $this->attempt('getFacetValuesWithImages', function () use ($facetName, $maxItems) {
+        return $this->cached('getFacetValuesWithImages', 'facets', $options, fn () => $this->attempt('getFacetValuesWithImages', function () use ($facetName, $maxItems) {
             $response = $this->api->getStorefront('/browse/facet_options', [
                 'facet_name' => $facetName,
                 'section' => $this->config->defaultSection,
@@ -401,16 +415,16 @@ class SearchService
                 return [];
             }
 
-            $options = $facet['options'];
-            usort($options, fn (array $a, array $b) => $b['count'] <=> $a['count']);
+            $facetOptions = $facet['options'];
+            usort($facetOptions, fn (array $a, array $b) => $b['count'] <=> $a['count']);
 
             return array_map(fn (array $option) => [
                 'value' => $option['value'],
                 'display_name' => $option['display_name'],
                 'count' => $option['count'],
                 'image' => $option['data']['image_url'] ?? $this->firstImage($this->browse($facetName, $option['value'], [], ['per_page' => 1])),
-            ], array_slice($options, 0, $maxItems));
-        }, fn () => []);
+            ], array_slice($facetOptions, 0, $maxItems));
+        }, fn () => []), [$facetName, $maxItems]);
     }
 
     /**
@@ -425,14 +439,18 @@ class SearchService
      *   group_id        string  Start from this sub-category
      *   with_images     bool    Add each group's first product image
      *   section         string  Index section
+     *   cache           bool    false skips the response cache (when enabled)
      * The 1.x names max_items and max_children are also accepted.
+     *
+     * With with_images and the cache on, every shopper sees the same image per
+     * group (the first product when the list was cached).
      *
      * @param  array<string, mixed>  $options
      * @return list<array<string, mixed>>
      */
     public function getBrowseGroups(array $options = []): array
     {
-        return $this->attempt('getBrowseGroups', function () use ($options) {
+        return $this->cached('getBrowseGroups', 'categories', $options, fn () => $this->attempt('getBrowseGroups', function () use ($options) {
             $parameters = $this->sectionParameters($options);
 
             if (isset($options['group_id'])) {
@@ -467,18 +485,18 @@ class SearchService
             }
 
             return $groups;
-        }, fn () => []);
+        }, fn () => []));
     }
 
     /**
      * Collections (curated product lists) set up in the dashboard.
      *
-     * @param  array<string, mixed>  $options  page, per_page (default 10; max_items, the 1.x name, also works), sort_by (id|display_name), sort_order, section
+     * @param  array<string, mixed>  $options  page, per_page (default 10; max_items, the 1.x name, also works), sort_by (id|display_name), sort_order, section, cache (false skips the response cache)
      * @return list<array<string, mixed>>
      */
     public function getCollections(array $options = []): array
     {
-        return $this->attempt('getCollections', function () use ($options) {
+        return $this->cached('getCollections', 'collections', $options, fn () => $this->attempt('getCollections', function () use ($options) {
             $parameters = $this->sectionParameters($options) + [
                 'num_results_per_page' => min(ParameterBuilder::MAX_PER_PAGE, max(1, (int) ($options['per_page'] ?? $options['max_items'] ?? 10))),
                 'page' => ParameterBuilder::page($options),
@@ -495,17 +513,18 @@ class SearchService
                 fn (array $collection) => $this->transformer->collection($collection),
                 array_filter($response['response']['collections'] ?? [], 'is_array'),
             ));
-        }, fn () => []);
+        }, fn () => []));
     }
 
     /**
      * One collection's details (name, custom data), or null if it doesn't exist.
      *
+     * @param  array<string, mixed>  $options  cache (false skips the response cache)
      * @return array<string, mixed>|null
      */
-    public function getCollection(string $collectionId): ?array
+    public function getCollection(string $collectionId, array $options = []): ?array
     {
-        return $this->attempt('getCollection', function () use ($collectionId) {
+        return $this->cached('getCollection', 'collections', $options, fn () => $this->attempt('getCollection', function () use ($collectionId) {
             $response = $this->api->getStorefront(
                 '/browse/collection_id/'.Path::segment($collectionId),
                 ['section' => $this->config->defaultSection, 'num_results_per_page' => 1],
@@ -514,7 +533,17 @@ class SearchService
             $collection = $response['response']['collection'] ?? null;
 
             return is_array($collection) ? $this->transformer->collection($collection) : null;
-        }, fn () => null);
+        }, fn () => null), [$collectionId]);
+    }
+
+    /**
+     * Make every cached category tree, facet list and collection stale, e.g.
+     * after changing them in the dashboard. Works with every cache store.
+     * Does nothing useful while the cache is disabled.
+     */
+    public function flushCache(): void
+    {
+        $this->responseCache->flush();
     }
 
     /**

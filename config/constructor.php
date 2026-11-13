@@ -273,4 +273,40 @@ return [
         'sync_mode' => env('CONSTRUCTOR_SCOUT_SYNC_MODE', 'replace'),
     ],
 
+    /*
+    |--------------------------------------------------------------------------
+    | Response Cache
+    |--------------------------------------------------------------------------
+    |
+    | Off by default. When enabled, responses that are the same for every
+    | shopper are cached: the category tree (getBrowseGroups), facet lists
+    | (getAvailableFacets, getFacetsWithOptions, getFacetValuesWithImages)
+    | and collections (getCollections, getCollection). Search, browse,
+    | autocomplete, recommendations, quizzes and the agents are never cached:
+    | they are personalized per shopper.
+    |
+    | enabled        Turn caching on.
+    | store          A store from config/cache.php. Empty = the default store.
+    | prefix         Start of every cache key.
+    | ttl            Seconds to keep a response.
+    | ttl_overrides  Seconds per response type; empty = use `ttl`.
+    |
+    | Pass 'cache' => false to one call to skip the cache. After changing
+    | categories, facets or collections in the dashboard, call
+    | Constructor::flushCache() (it works with every cache store).
+    |
+    */
+
+    'cache' => [
+        'enabled' => env('CONSTRUCTOR_CACHE_ENABLED', false),
+        'store' => env('CONSTRUCTOR_CACHE_STORE'),
+        'prefix' => env('CONSTRUCTOR_CACHE_PREFIX', 'constructor'),
+        'ttl' => env('CONSTRUCTOR_CACHE_TTL', 600),
+        'ttl_overrides' => [
+            'categories' => env('CONSTRUCTOR_CACHE_TTL_CATEGORIES'),
+            'facets' => env('CONSTRUCTOR_CACHE_TTL_FACETS'),
+            'collections' => env('CONSTRUCTOR_CACHE_TTL_COLLECTIONS'),
+        ],
+    ],
+
 ];

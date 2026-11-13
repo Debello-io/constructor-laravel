@@ -14,6 +14,7 @@ use ConstructorIO\Laravel\Services\RecommendationService;
 use ConstructorIO\Laravel\Services\SearchService;
 use ConstructorIO\Laravel\Support\ConstructorConfig;
 use ConstructorIO\Laravel\Support\RequestContext;
+use ConstructorIO\Laravel\Support\ResponseCache;
 use Illuminate\Http\Client\Request as HttpRequest;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Route;
@@ -75,6 +76,7 @@ abstract class TestCase extends Orchestra
             ConstructorConfig::class,
             RequestContext::class,
             ApiClient::class,
+            ResponseCache::class,
             SearchService::class,
             RecommendationService::class,
             AgentService::class,

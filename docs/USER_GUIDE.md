@@ -272,7 +272,40 @@ $recommendations = Cache::remember($key, now()->addMinutes(10), fn () =>
 );
 ```
 
-Caching non-personalized data, such as the category tree from `getBrowseGroups()`, globally is fine.
+Caching non-personalized data, such as the category tree from `getBrowseGroups()`, globally is fine. The package can do that for you: see the next section.
+
+### The built-in response cache
+
+Some responses are the same for every shopper: the category tree, the facet lists and collections. The package can cache them, so a menu doesn't cost a Constructor request on every page view. It's off by default:
+
+```env
+CONSTRUCTOR_CACHE_ENABLED=true
+CONSTRUCTOR_CACHE_STORE=redis              # empty = your default cache store
+CONSTRUCTOR_CACHE_TTL=600                  # seconds
+CONSTRUCTOR_CACHE_TTL_CATEGORIES=3600      # per-type overrides (also _FACETS, _COLLECTIONS)
+```
+
+| Cached | Never cached |
+|--------|--------------|
+| `getBrowseGroups()` (also the categories in `getZeroStateData()`), `getAvailableFacets()`, `getFacetsWithOptions()`, `getFacetValuesWithImages()`, `getCollections()`, `getCollection()` | Search, browse, autocomplete, recommendations, quizzes, the agents and catalog calls |
+
+How it behaves:
+
+- **Every option is part of the key.** Different pages, sections, `user_segments` (segments can change results through rules) and `fmt_options` get their own entries, and so do different API keys. The shopper identity overrides (`client_id`, `session_id`, `user_id`) are not part of the key, because these endpoints don't vary by shopper.
+- **Failures are never cached.** If Constructor is down, the page gets an empty menu, and the next request asks again. The same applies when an image lookup inside `with_images` fails.
+- **Images are shared.** With `with_images`, and for `getFacetValuesWithImages()` options without an `image_url`, the image comes from the first product. Once cached, every shopper sees the same image until the entry expires.
+- **A broken cache store doesn't break the page.** Cache errors are logged and the response comes straight from Constructor.
+
+Skip the cache for one call with `'cache' => false`, and empty it after you change categories, facets or collections in the dashboard:
+
+```php
+Constructor::getBrowseGroups(['cache' => false]);
+Constructor::getCollection('summer-cookout', ['cache' => false]);
+
+Constructor::flushCache();
+```
+
+`flushCache()` works with every cache store, including ones without tags: cache keys carry a generation number, and flushing increments it. Old entries are never read again and expire on their own TTL. Run it from a deploy script or a scheduled command when your merchandising team changes the category tree.
 
 ### Mobile apps calling your API
 
@@ -2399,8 +2432,8 @@ On storefront traffic, this almost always means `CONSTRUCTOR_BACKEND_TOKEN` is m
 
 ### Performance
 
-- Category images (`with_images`), `getFacetValuesWithImages()` and `getFirstProductImageFromCollection()` make extra requests. Cache them.
-- Cache non-personalized data such as the category tree globally, and personalized data per client ID.
+- Category images (`with_images`), `getFacetValuesWithImages()` and `getFirstProductImageFromCollection()` make extra requests. Turn on the [response cache](#the-built-in-response-cache) (`CONSTRUCTOR_CACHE_ENABLED=true`) for the first two; cache the third yourself.
+- The response cache covers the category tree, facets and collections. Cache personalized data yourself, per client ID.
 - Keep `CONSTRUCTOR_TIMEOUT` short (the default is 10 seconds) so a slow response doesn't hold up page rendering.
 
 ### Need more help?
