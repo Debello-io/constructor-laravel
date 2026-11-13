@@ -18,7 +18,7 @@ class NaturalLanguageAndFacetOptionsTest extends TestCase
 {
     private function service(): SearchService
     {
-        return $this->app->make(SearchService::class);
+        return app(SearchService::class);
     }
 
     public function test_natural_language_search_calls_the_documented_endpoint_with_identity(): void

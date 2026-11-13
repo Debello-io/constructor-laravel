@@ -17,7 +17,7 @@ class BehaviorServiceTest extends TestCase
 {
     private function behavior(): BehaviorService
     {
-        return $this->app->make(BehaviorService::class);
+        return app(BehaviorService::class);
     }
 
     /**

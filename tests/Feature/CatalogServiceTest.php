@@ -31,7 +31,7 @@ class CatalogServiceTest extends TestCase
 
     private function catalog(): CatalogService
     {
-        return $this->app->make(CatalogService::class);
+        return app(CatalogService::class);
     }
 
     private function temporaryFile(string $extension, string $contents): string
@@ -204,10 +204,10 @@ class CatalogServiceTest extends TestCase
 
     public function test_items_are_sent_in_batches(): void
     {
-        $this->app->make('config')->set('constructor.catalog.batch_size', 2);
-        $this->app->forgetInstance(ConstructorConfig::class);
-        $this->app->forgetInstance(ApiClient::class);
-        $this->app->forgetInstance(CatalogService::class);
+        app('config')->set('constructor.catalog.batch_size', 2);
+        app()->forgetInstance(ConstructorConfig::class);
+        app()->forgetInstance(ApiClient::class);
+        app()->forgetInstance(CatalogService::class);
 
         Http::fake(['*' => Http::sequence()
             ->push(['task_id' => 1, 'task_status_path' => '/v1/tasks/1'])
@@ -244,7 +244,9 @@ class CatalogServiceTest extends TestCase
             '*' => Http::response(['message' => 'Not found'], 404),
         ]);
 
-        $this->assertSame('Grate', $this->catalog()->getItem('a/b')['name']);
+        $item = $this->catalog()->getItem('a/b');
+        $this->assertNotNull($item);
+        $this->assertSame('Grate', $item['name']);
         $this->assertNull($this->catalog()->getItem('missing'));
     }
 
@@ -339,10 +341,10 @@ class CatalogServiceTest extends TestCase
 
     public function test_missing_api_token_is_a_configuration_error(): void
     {
-        $this->app->make('config')->set('constructor.api_token', null);
-        $this->app->forgetInstance(ConstructorConfig::class);
-        $this->app->forgetInstance(ApiClient::class);
-        $this->app->forgetInstance(CatalogService::class);
+        app('config')->set('constructor.api_token', null);
+        app()->forgetInstance(ConstructorConfig::class);
+        app()->forgetInstance(ApiClient::class);
+        app()->forgetInstance(CatalogService::class);
         Http::fake();
 
         $this->expectException(ConfigurationException::class);
@@ -354,7 +356,7 @@ class CatalogServiceTest extends TestCase
         Http::fake(['ac.cnstrc.com/*' => Http::response('unavailable', 503)]);
 
         try {
-            $this->app->make(CatalogService::class)->upsertItems([['id' => 'TRG-780', 'name' => 'Pro 780']]);
+            app(CatalogService::class)->upsertItems([['id' => 'TRG-780', 'name' => 'Pro 780']]);
             $this->fail('Expected ApiException');
         } catch (ApiException $e) {
             $this->assertSame(503, $e->getStatusCode());
@@ -370,7 +372,9 @@ class CatalogServiceTest extends TestCase
             ->push('unavailable', 503)
             ->push(['id' => 'TRG-780', 'name' => 'Pro 780']);
 
-        $this->assertSame('TRG-780', $this->app->make(CatalogService::class)->getItem('TRG-780')['id']);
+        $item = app(CatalogService::class)->getItem('TRG-780');
+        $this->assertNotNull($item);
+        $this->assertSame('TRG-780', $item['id']);
         Http::assertSentCount(2);
     }
 
@@ -381,7 +385,7 @@ class CatalogServiceTest extends TestCase
             ->push(['id' => 7, 'status' => 'IN_PROGRESS'])
             ->push(['id' => 7, 'status' => 'DONE', 'result' => ['index_built' => true]]);
 
-        $status = $this->app->make(CatalogService::class)->waitForTaskCompletion(7, timeoutSeconds: 15, pollIntervalSeconds: 10);
+        $status = app(CatalogService::class)->waitForTaskCompletion(7, timeoutSeconds: 15, pollIntervalSeconds: 10);
 
         $this->assertTrue($status['successful']);
         $this->assertTrue($status['indexed']);
@@ -423,9 +427,7 @@ class CatalogServiceTest extends TestCase
         $this->catalog()->patchVariations([['id' => 'TRG-780-BLK', 'in_stock' => false]], null, ['on_missing' => 'ignore']);
         $this->catalog()->deleteVariations(['TRG-780-BLK', '', 'TRG-780-RED']);
 
-        $sent = Http::recorded();
-        [$patch] = $sent[0];
-        [$delete] = $sent[1];
+        [$patch, $delete] = $this->sentRequests();
 
         $this->assertSame('PATCH', $patch->method());
         $this->assertSame('/v2/variations', $this->pathOf($patch));
@@ -457,7 +459,9 @@ class CatalogServiceTest extends TestCase
             '*/v2/variations?*' => Http::response(['variations' => [['id' => 'v1', 'item_id' => 'TRG-780']], 'total_count' => 1]),
         ]);
 
-        $this->assertSame('TRG/780', $this->catalog()->getVariation('TRG/780-BLK')['item_id']);
+        $variation = $this->catalog()->getVariation('TRG/780-BLK');
+        $this->assertNotNull($variation);
+        $this->assertSame('TRG/780', $variation['item_id']);
         $this->assertNull($this->catalog()->getVariation('missing'));
 
         $page = $this->catalog()->listVariations('Products', ['item_ids' => ['TRG-780', 'TRG-575'], 'per_page' => 50, 'page' => 2]);
@@ -526,8 +530,7 @@ class CatalogServiceTest extends TestCase
         $this->catalog()->patchItemGroups([['id' => 'pellet-grills', 'parent_ids' => []]], ['on_missing' => 'CREATE']);
         $this->catalog()->deleteItemGroups(['old-category']);
 
-        [$patch] = Http::recorded()[0];
-        [$delete] = Http::recorded()[1];
+        [$patch, $delete] = $this->sentRequests();
 
         $this->assertSame('PATCH', $patch->method());
         $this->assertArrayNotHasKey('on_missing', $this->queryOf($patch));
@@ -547,7 +550,9 @@ class CatalogServiceTest extends TestCase
             '*/v2/item_groups?*' => Http::response(['item_groups' => [['id' => 'grills', 'name' => 'Grills']], 'total_count' => 1]),
         ]);
 
-        $this->assertSame('Gas Grills', $this->catalog()->getItemGroup('grills/gas')['name']);
+        $group = $this->catalog()->getItemGroup('grills/gas');
+        $this->assertNotNull($group);
+        $this->assertSame('Gas Grills', $group['name']);
         $this->assertNull($this->catalog()->getItemGroup('missing'));
 
         $page = $this->catalog()->listItemGroups(['ids' => ['grills'], 'per_page' => 5000, 'next_page_cursor' => 'ignored']);
@@ -592,6 +597,6 @@ class CatalogServiceTest extends TestCase
         $this->expectException(TaskTimeoutException::class);
         $this->expectExceptionMessage('was still unknown');
 
-        $this->app->make(CatalogService::class)->waitForTaskCompletion(7, timeoutSeconds: 1, pollIntervalSeconds: 1);
+        app(CatalogService::class)->waitForTaskCompletion(7, timeoutSeconds: 1, pollIntervalSeconds: 1);
     }
 }

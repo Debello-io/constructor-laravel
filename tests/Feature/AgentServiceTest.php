@@ -23,7 +23,7 @@ class AgentServiceTest extends TestCase
 {
     private function agent(): AgentService
     {
-        return $this->app->make(AgentService::class);
+        return app(AgentService::class);
     }
 
     /**
@@ -44,6 +44,9 @@ class AgentServiceTest extends TestCase
         ]);
     }
 
+    /**
+     * @return array<string, mixed>
+     */
     private function product(string $id, string $name): array
     {
         return [
@@ -123,6 +126,7 @@ class AgentServiceTest extends TestCase
         $this->assertTrue($received[5][1]['anything']);
         $this->assertSame($reply, $received[7][1]);
         $this->assertSame('customer_support', $reply['route']);
+        $this->assertNotNull($reply['recipe']);
         $this->assertSame('Brisket', $reply['recipe']['info']['recipe_title']);
     }
 
@@ -192,7 +196,7 @@ class AgentServiceTest extends TestCase
             $this->assertSame('203.0.113.42', $request->header('X-Forwarded-For')[0]);
             $this->assertSame('Mozilla/5.0 (Shopper Browser)', $request->header('User-Agent')[0]);
             $this->assertSame('text/event-stream', $request->header('Accept')[0]);
-            $this->assertStringNotContainsString('tok_secret_api_token', json_encode($request->headers()));
+            $this->assertStringNotContainsString('tok_secret_api_token', json_encode($request->headers(), JSON_THROW_ON_ERROR));
             $this->assertStringNotContainsString('tok_secret_api_token', $request->url());
 
             return true;
@@ -201,11 +205,11 @@ class AgentServiceTest extends TestCase
 
     public function test_missing_agent_domain_throws_a_configuration_exception(): void
     {
-        $this->app['config']->set('constructor.agent.domain', null);
-        $this->app->forgetInstance(ConstructorConfig::class);
-        $this->app->forgetInstance(AgentService::class);
-        $this->app->forgetInstance(ApiClient::class);
-        $this->app->forgetInstance(RequestContext::class);
+        config()->set('constructor.agent.domain', null);
+        app()->forgetInstance(ConstructorConfig::class);
+        app()->forgetInstance(AgentService::class);
+        app()->forgetInstance(ApiClient::class);
+        app()->forgetInstance(RequestContext::class);
 
         $this->expectException(ConfigurationException::class);
 
@@ -325,10 +329,10 @@ class AgentServiceTest extends TestCase
 
     public function test_a_stream_that_never_finishes_is_cut_off_at_the_stream_timeout(): void
     {
-        $this->app['config']->set('constructor.stream_timeout', 30);
-        $this->app->forgetInstance(ConstructorConfig::class);
-        $this->app->forgetInstance(ApiClient::class);
-        $this->app->forgetInstance(AgentService::class);
+        config()->set('constructor.stream_timeout', 30);
+        app()->forgetInstance(ConstructorConfig::class);
+        app()->forgetInstance(ApiClient::class);
+        app()->forgetInstance(AgentService::class);
 
         // Each read returns a keep-alive and moves the clock forward 10 seconds,
         // so the stream is alive but never completes.

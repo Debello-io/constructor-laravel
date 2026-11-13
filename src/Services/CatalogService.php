@@ -614,11 +614,13 @@ class CatalogService
 
     /**
      * Records sent per /v2/items, /v2/variations or /v2/item_groups request
-     * (CONSTRUCTOR_CATALOG_BATCH_SIZE, capped at the API's limit of 10,000).
+     * (CONSTRUCTOR_CATALOG_BATCH_SIZE, kept between 1 and the API's limit of 10,000).
+     *
+     * @return int<1, 10000>
      */
     public function batchSize(): int
     {
-        return min(self::MAX_ITEMS_PER_REQUEST, $this->config->catalogBatchSize);
+        return min(self::MAX_ITEMS_PER_REQUEST, max(1, $this->config->catalogBatchSize));
     }
 
     /**

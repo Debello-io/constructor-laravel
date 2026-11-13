@@ -46,7 +46,7 @@ A full review against Constructor's API reference and backend-integration docume
 - Variations API: `upsertVariations()`, `patchVariations()`, `deleteVariations()`, `getVariation()`, `listVariations()` (`/v2/variations`).
 - Item groups (categories) API: `upsertItemGroups()`, `patchItemGroups()`, `deleteItemGroups()`, `getItemGroup()`, `listItemGroups()` (`/v2/item_groups`).
 - Catalog Batching Service for frequent small updates: `Constructor::catalogBatching()` with `patchItems()`, `deleteItems()`, `patchVariations()`, `deleteVariations()`, and the `catalog_batching_base_url` setting.
-- Test suite (PHPUnit + Testbench), Pint, Larastan and GitHub Actions CI.
+- Test suite (PHPUnit + Testbench), Pint, Larastan (level 8, source and tests) and GitHub Actions CI with SHA-pinned actions and Dependabot.
 - `AGENTS.md`, `CLAUDE.md`, the Constructor docs MCP server, Claude Code skills, a review subagent, CONTRIBUTING and SECURITY.
 - Laravel 13 support. The Scout engine requires Scout 11.
 - Quizzes: `Constructor::quizzes()` (`QuizService`) with `getNextQuestion()`, `getResults()` and `getResultsConfig()`, returning the new `QuizQuestion` and `QuizResults` DTOs. New `quizzes_base_url` setting (`CONSTRUCTOR_QUIZZES_BASE_URL`).

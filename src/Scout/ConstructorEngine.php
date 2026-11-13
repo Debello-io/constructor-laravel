@@ -91,11 +91,9 @@ class ConstructorEngine extends Engine
         }
 
         $this->groupBySection($models)->each(function (Collection $sectionModels, string $section) {
-            $items = $sectionModels
-                ->map(fn (Model $model) => $this->toItem($model))
-                ->filter()
-                ->values()
-                ->all();
+            $items = array_values(array_filter(
+                $sectionModels->map(fn (Model $model) => $this->toItem($model))->all(),
+            ));
 
             if ($items === []) {
                 return;
@@ -117,7 +115,7 @@ class ConstructorEngine extends Engine
     public function delete($models): void
     {
         $this->groupBySection($models)->each(function (Collection $sectionModels, string $section) {
-            $ids = $sectionModels->map(fn (Model $model) => $this->itemId($model))->all();
+            $ids = array_values($sectionModels->map(fn (Model $model) => $this->itemId($model))->all());
 
             if ($ids !== []) {
                 $this->catalog->deleteItems($ids, $section);

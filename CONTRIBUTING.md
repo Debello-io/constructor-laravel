@@ -20,7 +20,7 @@ You don't need Constructor credentials to work on the package. The tests fake ev
 | `composer test` | PHPUnit (Orchestra Testbench) |
 | `composer lint` | Check code style with Laravel Pint |
 | `composer format` | Fix code style |
-| `composer analyse` | Static analysis with PHPStan / Larastan |
+| `composer analyse` | Static analysis with PHPStan / Larastan at level 8, covering `src` and `tests` |
 | `composer check` | All of the above. Must pass before you open a PR. |
 
 ## How we work

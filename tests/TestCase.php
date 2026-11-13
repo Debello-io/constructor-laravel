@@ -19,6 +19,7 @@ use Illuminate\Http\Request;
 use Illuminate\Routing\Route;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use Mockery\MockInterface;
 use Orchestra\Testbench\TestCase as Orchestra;
 
 /**
@@ -67,7 +68,7 @@ abstract class TestCase extends Orchestra
     protected function reconfigure(array $values): void
     {
         foreach ($values as $key => $value) {
-            $this->app['config']->set($key, $value);
+            config()->set($key, $value);
         }
 
         foreach ([
@@ -83,7 +84,7 @@ abstract class TestCase extends Orchestra
             BehaviorService::class,
             Constructor::class,
         ] as $singleton) {
-            $this->app->forgetInstance($singleton);
+            app()->forgetInstance($singleton);
         }
     }
 
@@ -112,7 +113,7 @@ abstract class TestCase extends Orchestra
         // shopper request (see RequestContext::request()).
         $request->setRouteResolver(fn () => new Route('GET', 'search', fn () => null));
 
-        $this->app->instance('request', $request);
+        app()->instance('request', $request);
 
         return $request;
     }
@@ -140,10 +141,22 @@ abstract class TestCase extends Orchestra
      * Spy on the log. The package logs through Log::channel(), so the channel
      * call returns the same spy.
      */
-    protected function spyOnLog(): void
+    protected function spyOnLog(): MockInterface
     {
-        Log::spy();
+        $log = Log::spy();
         Log::shouldReceive('channel')->andReturnSelf();
+
+        return $log;
+    }
+
+    /**
+     * The requests sent while Http::fake() was active, oldest first.
+     *
+     * @return list<HttpRequest>
+     */
+    protected function sentRequests(): array
+    {
+        return array_values(Http::recorded()->map(fn (array $pair) => $pair[0])->all());
     }
 
     protected function pathOf(HttpRequest $request): string

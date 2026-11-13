@@ -39,6 +39,25 @@ use SensitiveParameter;
  * @see https://docs.constructor.com/reference/v1-asa-retrieve-intent
  * @see https://docs.constructor.com/reference/v1-asa-retrieve-item-questions
  * @see https://docs.constructor.com/reference/v1-asa-retrieve-item-questions-answer
+ *
+ * What askShoppingAgent() and askShoppingAgentStreaming() return:
+ *
+ * @phpstan-type ShoppingAgentReply array{
+ *     message: string,
+ *     products: list<array<string, mixed>>,
+ *     thread_id: string|null,
+ *     intent_result_id: string|null,
+ *     result_ids: list<string>,
+ *     follow_up_questions: list<string>,
+ *     refinements: list<array{question: string, options: list<string>}>,
+ *     search_requests: list<array<string, mixed>>,
+ *     alternative_search_requests: list<array<string, mixed>>,
+ *     articles: list<array<string, mixed>>,
+ *     images: array<string, array<string, mixed>>,
+ *     recipe: array<string, mixed>|null,
+ *     route: string|null,
+ *     _raw: list<array{event: string, data: mixed}>
+ * }
  */
 class AgentService
 {
@@ -77,22 +96,7 @@ class AgentService
      *   user_id, client_id, session_id   Identity overrides (see RequestContext)
      *
      * @param  array<string, mixed>  $options
-     * @return array{
-     *     message: string,
-     *     products: list<array<string, mixed>>,
-     *     thread_id: string|null,
-     *     intent_result_id: string|null,
-     *     result_ids: list<string>,
-     *     follow_up_questions: list<string>,
-     *     refinements: list<array{question: string, options: list<string>}>,
-     *     search_requests: list<array<string, mixed>>,
-     *     alternative_search_requests: list<array<string, mixed>>,
-     *     articles: list<array<string, mixed>>,
-     *     images: array<string, array<string, mixed>>,
-     *     recipe: array<string, mixed>|null,
-     *     route: string|null,
-     *     _raw: list<array{event: string, data: mixed}>
-     * }
+     * @return ShoppingAgentReply
      *
      * @throws ConstructorException
      */
@@ -124,7 +128,7 @@ class AgentService
      *
      * @param  callable(string, array<string, mixed>): mixed  $onEvent
      * @param  array<string, mixed>  $options  Same as askShoppingAgent().
-     * @return array<string, mixed> Same shape as askShoppingAgent().
+     * @return ShoppingAgentReply
      *
      * @throws ConstructorException
      */
@@ -398,14 +402,14 @@ class AgentService
      * Fold one Shopping Agent event into the result and notify the caller.
      *
      * @param  array<string, mixed>  $data
-     * @param  array<string, mixed>  $result
+     * @param  ShoppingAgentReply  $result
      * @param  callable(string, array<string, mixed>): mixed  $onEvent
      */
     private function applyIntentEvent(string $event, array $data, array &$result, callable $onEvent): void
     {
         $result['_raw'][] = ['event' => $event, 'data' => $data];
-        $result['thread_id'] = $data['thread_id'] ?? $result['thread_id'];
-        $result['intent_result_id'] = $data['intent_result_id'] ?? $result['intent_result_id'];
+        $result['thread_id'] = self::text($data['thread_id'] ?? null) ?? $result['thread_id'];
+        $result['intent_result_id'] = self::text($data['intent_result_id'] ?? null) ?? $result['intent_result_id'];
 
         switch ($event) {
             case 'start':
@@ -413,49 +417,50 @@ class AgentService
                 break;
 
             case 'message':
-                $result['message'] .= $data['text'] ?? '';
+                $text = self::text($data['text'] ?? null) ?? '';
                 // `route` applies to this message only, e.g. "customer_support".
-                $result['route'] = $data['route'] ?? $result['route'];
-                $onEvent('message', [
-                    'text' => $data['text'] ?? '',
-                    'accumulated' => $result['message'],
-                    'route' => $data['route'] ?? null,
-                ]);
+                $route = self::text($data['route'] ?? null);
+
+                $result['message'] .= $text;
+                $result['route'] = $route ?? $result['route'];
+                $onEvent('message', ['text' => $text, 'accumulated' => $result['message'], 'route' => $route]);
                 break;
 
             case 'search_result':
-                $resultId = $data['result_id'] ?? null;
-                $response = $data['response'] ?? [];
+                $resultId = self::text($data['result_id'] ?? null);
+                $response = is_array($data['response'] ?? null) ? $data['response'] : [];
+                $searchRequest = self::map($response['search_request'] ?? null);
+                $alternatives = self::arrays($response['alternative_search_requests'] ?? null);
 
                 // Tag each product with its batch's result_id, needed to track clicks.
                 $products = array_map(
                     fn (array $product) => $product + ['result_id' => $resultId],
-                    $this->transformer->products($response['results'] ?? []),
+                    $this->transformer->products(self::arrays($response['results'] ?? null)),
                 );
 
                 $result['products'] = array_merge($result['products'], $products);
                 if ($resultId !== null) {
                     $result['result_ids'][] = $resultId;
                 }
-                if (isset($response['search_request'])) {
-                    $result['search_requests'][] = $response['search_request'];
+                if ($searchRequest !== null) {
+                    $result['search_requests'][] = $searchRequest;
                 }
-                $result['alternative_search_requests'] = array_merge(
-                    $result['alternative_search_requests'],
-                    $response['alternative_search_requests'] ?? [],
-                );
+                $result['alternative_search_requests'] = array_merge($result['alternative_search_requests'], $alternatives);
 
                 $onEvent('products', [
                     'products' => $products,
                     'result_id' => $resultId,
-                    'search_request' => $response['search_request'] ?? null,
-                    'alternative_search_requests' => $response['alternative_search_requests'] ?? [],
+                    'search_request' => $searchRequest,
+                    'alternative_search_requests' => $alternatives,
                 ]);
                 break;
 
             case 'follow_up_refinement':
-                $question = (string) ($data['question'] ?? '');
-                $options = array_values($data['options'] ?? []);
+                $question = self::text($data['question'] ?? null) ?? '';
+                $options = array_values(array_map('strval', array_filter(
+                    is_array($data['options'] ?? null) ? $data['options'] : [],
+                    'is_scalar',
+                )));
 
                 $result['follow_up_questions'][] = $question;
                 $result['refinements'][] = ['question' => $question, 'options' => $options];
@@ -584,6 +589,35 @@ class AgentService
     }
 
     /**
+     * A scalar from the stream as a string. Arrays, objects and null become
+     * null, so a malformed event can't put the wrong type in the reply.
+     */
+    private static function text(mixed $value): ?string
+    {
+        return is_scalar($value) ? (string) $value : null;
+    }
+
+    /**
+     * An object from the stream, or null if it isn't one.
+     *
+     * @return array<string, mixed>|null
+     */
+    private static function map(mixed $value): ?array
+    {
+        return is_array($value) ? $value : null;
+    }
+
+    /**
+     * The array entries of a list from the stream; anything else is dropped.
+     *
+     * @return list<array<string, mixed>>
+     */
+    private static function arrays(mixed $value): array
+    {
+        return is_array($value) ? array_values(array_filter($value, 'is_array')) : [];
+    }
+
+    /**
      * Map friendly and 1.x option names to the API's.
      *
      *   limit        -> num_results (the package-wide name for "how many")
@@ -633,7 +667,7 @@ class AgentService
     }
 
     /**
-     * @return array<string, mixed>
+     * @return ShoppingAgentReply
      */
     private function emptyShoppingAgentResult(?string $threadId): array
     {

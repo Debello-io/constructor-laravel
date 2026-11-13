@@ -17,9 +17,13 @@ class SearchServiceTest extends TestCase
 {
     private function service(): SearchService
     {
-        return $this->app->make(SearchService::class);
+        return app(SearchService::class);
     }
 
+    /**
+     * @param  array<string, mixed>  $overrides
+     * @return array<string, mixed>
+     */
     private function searchResponse(array $overrides = []): array
     {
         return array_replace_recursive([
@@ -206,8 +210,8 @@ class SearchServiceTest extends TestCase
 
     public function test_failures_throw_when_configured(): void
     {
-        $this->app['config']->set('constructor.throw_exceptions', true);
-        $this->app->forgetInstance(ConstructorConfig::class);
+        config()->set('constructor.throw_exceptions', true);
+        app()->forgetInstance(ConstructorConfig::class);
         Http::fake(['ac.cnstrc.com/*' => Http::response(['message' => 'unknown filter'], 400)]);
 
         try {
@@ -222,19 +226,19 @@ class SearchServiceTest extends TestCase
 
     public function test_missing_api_key_always_throws(): void
     {
-        $this->app['config']->set('constructor.api_key', null);
-        $this->app->forgetInstance(ConstructorConfig::class);
+        config()->set('constructor.api_key', null);
+        app()->forgetInstance(ConstructorConfig::class);
         Http::fake();
 
         $this->expectException(ConfigurationException::class);
 
-        $this->app->make(SearchService::class)->search('grill');
+        app(SearchService::class)->search('grill');
     }
 
     public function test_connection_errors_do_not_leak_the_request_url(): void
     {
-        $this->app['config']->set('constructor.throw_exceptions', true);
-        $this->app->forgetInstance(ConstructorConfig::class);
+        config()->set('constructor.throw_exceptions', true);
+        app()->forgetInstance(ConstructorConfig::class);
         $this->actAsShopperRequest([RequestContext::CLIENT_ID_COOKIE => 'secret-client-id']);
         Http::fake(fn () => throw new ConnectionException(
             'cURL error 7: Failed to connect for https://ac.cnstrc.com/v1/search/my%20query?key=key_test&i=secret-client-id'
@@ -270,13 +274,13 @@ class SearchServiceTest extends TestCase
             'section_pre_filter_expression' => ['Products' => ['name' => 'brand', 'value' => 'Weber']],
         ]);
 
-        $requests = Http::recorded();
-        $first = $this->queryOf($requests[0][0]);
+        $requests = $this->sentRequests();
+        $first = $this->queryOf($requests[0]);
         $this->assertSame(['True'], $first['filters[in_stock]'] ?? null);
         $this->assertSame(['Weber', 'Traeger'], $first['filters[Products][brand]'] ?? null);
         $this->assertSame(
             ['{"name":"brand","value":"Weber"}'],
-            $this->queryOf($requests[1][0])['pre_filter_expression[Products]'] ?? null,
+            $this->queryOf($requests[1])['pre_filter_expression[Products]'] ?? null,
         );
     }
 

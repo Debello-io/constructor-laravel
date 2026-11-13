@@ -61,8 +61,8 @@ class ScoutEngineTest extends TestCase
     private function reconfigureScout(array $values): void
     {
         config($values);
-        $this->app->forgetInstance(ConstructorConfig::class);
-        $this->app->make(EngineManager::class)->forgetDrivers();
+        app()->forgetInstance(ConstructorConfig::class);
+        app(EngineManager::class)->forgetDrivers();
     }
 
     /**
@@ -96,6 +96,7 @@ class ScoutEngineTest extends TestCase
 
     /**
      * @param  list<string>  $ids
+     * @return array<string, mixed>
      */
     private function searchResponse(array $ids, int $total): array
     {
@@ -112,7 +113,7 @@ class ScoutEngineTest extends TestCase
 
     public function test_the_constructor_driver_is_registered(): void
     {
-        $this->assertInstanceOf(ConstructorEngine::class, $this->app->make(EngineManager::class)->engine('constructor'));
+        $this->assertInstanceOf(ConstructorEngine::class, app(EngineManager::class)->engine('constructor'));
     }
 
     public function test_update_sends_items_with_the_scout_key_as_id_and_extra_fields_in_data(): void
@@ -147,13 +148,13 @@ class ScoutEngineTest extends TestCase
         $this->createGrills();
         Http::fake(['*' => Http::response(['task_id' => 2, 'task_status_path' => '/v1/tasks/2'])]);
 
-        Grill::find(2)->unsearchable();
+        Grill::findOrFail(2)->unsearchable();
         Grill::removeAllFromSearch();
 
-        $deletes = Http::recorded(fn (Request $request) => $request->method() === 'DELETE');
+        $deletes = array_values(array_filter($this->sentRequests(), fn (Request $request) => $request->method() === 'DELETE'));
         $this->assertCount(2, $deletes);
-        $this->assertSame([['id' => '2']], $deletes[0][0]->data()['items']);
-        $this->assertSame([['id' => '1'], ['id' => '2'], ['id' => '3']], $deletes[1][0]->data()['items']);
+        $this->assertSame([['id' => '2']], $deletes[0]->data()['items']);
+        $this->assertSame([['id' => '1'], ['id' => '2'], ['id' => '3']], $deletes[1]->data()['items']);
     }
 
     public function test_search_maps_wheres_and_returns_models_in_constructor_order(): void
@@ -330,7 +331,7 @@ class ScoutEngineTest extends TestCase
 
     public function test_map_ids_keeps_the_id_zero(): void
     {
-        $engine = $this->app->make(EngineManager::class)->engine('constructor');
+        $engine = app(EngineManager::class)->engine('constructor');
         $results = new SearchResults(products: [['id' => '0'], ['id' => '5'], ['id' => null], ['id' => '']], total: 4, page: 1, perPage: 24);
 
         $this->assertSame(['0', '5'], $engine->mapIds($results)->all());
@@ -358,13 +359,18 @@ class ScoutEngineTest extends TestCase
         $this->expectException(ConstructorException::class);
         $this->expectExceptionMessage('dashboard');
 
-        $this->app->make(EngineManager::class)->engine('constructor')->createIndex('grills');
+        app(EngineManager::class)->engine('constructor')->createIndex('grills');
     }
 }
 
 /**
  * Test model: section from getConstructorSection(), default toSearchableArray
  * plus a computed URL.
+ *
+ * @property int $id
+ * @property string $name
+ * @property float $price
+ * @property string $brand
  */
 class Grill extends Model implements ConstructorSearchable
 {
@@ -392,6 +398,9 @@ class Grill extends Model implements ConstructorSearchable
 
 /**
  * Test model with soft deletes and Scout's defaults (no ConstructorSearchable).
+ *
+ * @property int $id
+ * @property string $name
  */
 class Smoker extends Model
 {
@@ -402,6 +411,9 @@ class Smoker extends Model
 
     public $timestamps = false;
 
+    /**
+     * @return array<string, mixed>
+     */
     public function toSearchableArray(): array
     {
         return ['name' => $this->name];

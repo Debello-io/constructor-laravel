@@ -132,7 +132,7 @@ class BehaviorService
      * Every action is checked before anything is sent, then the actions go
      * out in batches of 100.
      *
-     * @param  list<array{action: string, data: array<string, mixed>}>  $actions
+     * @param  list<array<string, mixed>>  $actions  Each ['action' => 'purchase'|'return', 'data' => [...]]; validated before sending
      * @return int The number of actions sent.
      *
      * @throws InvalidArgumentException|ApiException|ConnectionException

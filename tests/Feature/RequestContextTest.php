@@ -12,7 +12,7 @@ class RequestContextTest extends TestCase
 {
     private function context(): RequestContext
     {
-        return $this->app->make(RequestContext::class);
+        return app(RequestContext::class);
     }
 
     public function test_identity_comes_from_the_beacon_cookies(): void
@@ -39,6 +39,7 @@ class RequestContextTest extends TestCase
         $first = $this->context()->queryParameters();
         $second = $this->context()->queryParameters();
 
+        $this->assertIsString($first['i']);
         $this->assertMatchesRegularExpression('/^[0-9a-f-]{36}$/', $first['i']);
         $this->assertSame($first['i'], $second['i'], 'One page view must reuse one generated ID');
         $this->assertSame(1, $first['s']);
@@ -96,9 +97,9 @@ class RequestContextTest extends TestCase
 
     public function test_the_api_token_is_never_used_as_the_backend_token(): void
     {
-        $this->app['config']->set('constructor.backend_token', null);
-        $this->app->forgetInstance(ConstructorConfig::class);
-        $this->app->forgetInstance(RequestContext::class);
+        config()->set('constructor.backend_token', null);
+        app()->forgetInstance(ConstructorConfig::class);
+        app()->forgetInstance(RequestContext::class);
         $this->actAsShopperRequest();
 
         $this->assertArrayNotHasKey('x-cnstrc-token', $this->context()->headers());

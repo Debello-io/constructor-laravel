@@ -12,7 +12,6 @@ use ConstructorIO\Laravel\Tests\TestCase;
 use Illuminate\Http\Client\Request;
 use Illuminate\Support\Facades\Cookie;
 use Illuminate\Support\Facades\Http;
-use Illuminate\Support\Facades\Log;
 
 /**
  * What must never leave the application, and inputs that must never break it.
@@ -21,7 +20,7 @@ class SecurityHardeningTest extends TestCase
 {
     private function context(): RequestContext
     {
-        return $this->app->make(RequestContext::class);
+        return app(RequestContext::class);
     }
 
     public function test_query_strings_are_never_sent_as_origin_referrer(): void
@@ -41,7 +40,7 @@ class SecurityHardeningTest extends TestCase
         Http::fake(['ac.cnstrc.com/*' => Http::response(['response' => ['results' => []]])]);
         $this->actAsShopperRequest(server: ['HTTP_USER_AGENT' => "Mozilla\x01evil\r\nX-Injected: 1"]);
 
-        $this->app->make(SearchService::class)->search('grill');
+        app(SearchService::class)->search('grill');
 
         Http::assertSent(fn (Request $request) => $request->header('User-Agent') === ['MozillaevilX-Injected: 1']);
     }
@@ -72,7 +71,9 @@ class SecurityHardeningTest extends TestCase
 
         $this->context()->queryParameters();
 
-        $this->assertTrue(Cookie::queued(RequestContext::CLIENT_ID_COOKIE)->isSecure());
+        $cookie = Cookie::queued(RequestContext::CLIENT_ID_COOKIE);
+        $this->assertNotNull($cookie);
+        $this->assertTrue($cookie->isSecure());
     }
 
     public function test_endpoint_parameters_cannot_override_key_or_identity(): void
@@ -80,7 +81,7 @@ class SecurityHardeningTest extends TestCase
         Http::fake(['ac.cnstrc.com/*' => Http::response(['response' => ['results' => []]])]);
         $this->actAsShopperRequest([RequestContext::CLIENT_ID_COOKIE => 'real-client']);
 
-        $this->app->make(SearchService::class)->search('grill', [], [
+        app(SearchService::class)->search('grill', [], [
             'parameters' => ['key' => 'key_other', 'i' => 'victim', 'c' => 'spoofed'],
         ]);
 
@@ -93,12 +94,12 @@ class SecurityHardeningTest extends TestCase
 
     public function test_error_messages_and_logs_never_contain_the_response_body(): void
     {
-        $this->spyOnLog();
+        $log = $this->spyOnLog();
         Http::fake(['ac.cnstrc.com/*' => Http::response(['message' => 'Unknown filter shopper@example.com'], 400)]);
 
-        $this->app->make(SearchService::class)->search('grill');
+        app(SearchService::class)->search('grill');
 
-        Log::shouldHaveReceived('warning')->withArgs(function (string $message, array $context = []) {
+        $log->shouldHaveReceived('warning')->withArgs(function (string $message, array $context = []) {
             return ! str_contains($message.json_encode($context), 'shopper@example.com');
         });
     }
@@ -109,7 +110,7 @@ class SecurityHardeningTest extends TestCase
         Http::fake(['ac.cnstrc.com/*' => Http::response(['message' => 'Unknown filter colour'], 400)]);
 
         try {
-            $this->app->make(SearchService::class)->search('grill');
+            app(SearchService::class)->search('grill');
             $this->fail('Expected ApiException');
         } catch (ApiException $e) {
             $this->assertStringNotContainsString('Unknown filter', $e->getMessage());
@@ -134,7 +135,7 @@ class SecurityHardeningTest extends TestCase
 
     public function test_tokens_are_masked_in_dumps(): void
     {
-        $dump = print_r($this->app->make(ConstructorConfig::class), true);
+        $dump = print_r(app(ConstructorConfig::class), true);
 
         $this->assertStringNotContainsString('tok_secret_api_token', $dump);
         $this->assertStringNotContainsString('backend_security_token', $dump);
@@ -143,20 +144,20 @@ class SecurityHardeningTest extends TestCase
     public function test_missing_backend_token_is_reported_once(): void
     {
         $this->reconfigure(['constructor.backend_token' => null]);
-        $this->spyOnLog();
+        $log = $this->spyOnLog();
         Http::fake(['ac.cnstrc.com/*' => Http::response(['response' => ['results' => []]])]);
 
-        $this->app->make(SearchService::class)->search('grill');
-        $this->app->make(SearchService::class)->search('smoker');
+        app(SearchService::class)->search('grill');
+        app(SearchService::class)->search('smoker');
 
-        Log::shouldHaveReceived('warning')->once()->withArgs(fn (string $message) => str_contains($message, 'CONSTRUCTOR_BACKEND_TOKEN'));
+        $log->shouldHaveReceived('warning')->once()->withArgs(fn (string $message) => str_contains($message, 'CONSTRUCTOR_BACKEND_TOKEN'));
     }
 
     public function test_nested_filter_input_is_ignored_rather_than_crashing(): void
     {
         Http::fake(['ac.cnstrc.com/*' => Http::response(['response' => ['results' => []]])]);
 
-        $this->app->make(SearchService::class)->search('grill', ['color' => ['x' => ['y' => '1']], 'brand' => ['Weber']]);
+        app(SearchService::class)->search('grill', ['color' => ['x' => ['y' => '1']], 'brand' => ['Weber']]);
 
         Http::assertSent(fn (Request $request) => ! isset($this->queryOf($request)['filters[color]'])
             && $this->queryOf($request)['filters[brand]'] === ['Weber']);

@@ -8,10 +8,12 @@ use ConstructorIO\Laravel\Services\RecommendationService;
 use ConstructorIO\Laravel\Tests\TestCase;
 use Illuminate\Http\Client\Request;
 use Illuminate\Support\Facades\Http;
-use Illuminate\Support\Facades\Log;
 
 class RecommendationServiceTest extends TestCase
 {
+    /**
+     * @return array<string, mixed>
+     */
     private function podResponse(): array
     {
         return [
@@ -30,7 +32,7 @@ class RecommendationServiceTest extends TestCase
         Http::fake(['ac.cnstrc.com/*' => Http::response($this->podResponse())]);
         $this->actAsShopperRequest();
 
-        $results = $this->app->make(RecommendationService::class)->getItemRecommendations(
+        $results = app(RecommendationService::class)->getItemRecommendations(
             'pdp-complementary',
             ['GRILL-1', 'GRILL-2'],
             ['num_results' => 4, 'filters' => ['brand' => 'Weber']],
@@ -56,7 +58,7 @@ class RecommendationServiceTest extends TestCase
     {
         Http::fake(['ac.cnstrc.com/*' => Http::response($this->podResponse())]);
 
-        $results = $this->app->make(RecommendationService::class)->getRecommendations('home-bestsellers');
+        $results = app(RecommendationService::class)->getRecommendations('home-bestsellers');
 
         $this->assertCount(1, $results->products);
         Http::assertSent(fn (Request $request) => ! isset($this->queryOf($request)['ui']) && ! isset($this->queryOf($request)['i']));
@@ -66,12 +68,15 @@ class RecommendationServiceTest extends TestCase
     {
         Http::fake(['ac.cnstrc.com/*' => Http::response('not found', 404)]);
 
-        $results = $this->app->make(RecommendationService::class)->getRecommendations('missing-pod');
+        $results = app(RecommendationService::class)->getRecommendations('missing-pod');
 
         $this->assertTrue($results->isEmpty());
         $this->assertSame('missing-pod', $results->podId);
     }
 
+    /**
+     * @return array<string, mixed>
+     */
     private function pageResponse(): array
     {
         return [
@@ -148,7 +153,7 @@ class RecommendationServiceTest extends TestCase
     {
         Http::fake(['ac.cnstrc.com/*' => Http::response($this->pageResponse())]);
 
-        $service = $this->app->make(RecommendationService::class);
+        $service = app(RecommendationService::class);
         $service->getPage('home');
         $service->getPage('home', ['num_results' => 500, 'pod_overrides' => ['home-hero' => ['num_results' => 0]]]);
 
@@ -163,7 +168,7 @@ class RecommendationServiceTest extends TestCase
     {
         Http::fake(['ac.cnstrc.com/*' => Http::response($this->pageResponse())]);
 
-        $page = $this->app->make(RecommendationService::class)->getPage('pdp', ['item_id' => 'GRILL-1']);
+        $page = app(RecommendationService::class)->getPage('pdp', ['item_id' => 'GRILL-1']);
 
         $this->assertSame('pdp', $page->pageId);
         $this->assertSame('Product page', $page->title);
@@ -190,14 +195,14 @@ class RecommendationServiceTest extends TestCase
     public function test_page_failure_returns_an_empty_page_and_logs(): void
     {
         Http::fake(['ac.cnstrc.com/*' => Http::response('not found', 404)]);
-        $this->spyOnLog();
+        $log = $this->spyOnLog();
 
-        $page = $this->app->make(RecommendationService::class)->getPage('missing-page');
+        $page = app(RecommendationService::class)->getPage('missing-page');
 
         $this->assertTrue($page->isEmpty());
         $this->assertSame('missing-page', $page->pageId);
         $this->assertSame([], $page->pods);
-        Log::shouldHaveReceived('warning')->once();
+        $log->shouldHaveReceived('warning')->once();
     }
 
     public function test_page_rejects_page_wide_settings_in_pod_overrides_before_sending(): void
@@ -205,7 +210,7 @@ class RecommendationServiceTest extends TestCase
         Http::fake();
 
         try {
-            $this->app->make(RecommendationService::class)->getPage('pdp', [
+            app(RecommendationService::class)->getPage('pdp', [
                 'pod_overrides' => ['pdp-similar' => ['item_id' => 'GRILL-9']],
             ]);
             $this->fail('Expected InvalidArgumentException');
@@ -221,7 +226,7 @@ class RecommendationServiceTest extends TestCase
         Http::fake();
         $this->expectException(InvalidArgumentException::class);
 
-        $this->app->make(RecommendationService::class)->getPage('pdp', [
+        app(RecommendationService::class)->getPage('pdp', [
             'pod_overrides' => ['pod][num_results' => ['num_results' => 1]],
         ]);
     }

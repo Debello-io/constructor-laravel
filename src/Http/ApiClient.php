@@ -321,7 +321,8 @@ class ApiClient
      */
     private function retryDelay(int $attempt, Throwable $e): int
     {
-        $delay = $this->config->retryDelay * (2 ** ($attempt - 1));
+        // Doubles each attempt: retry_delay, 2 x retry_delay, 4 x retry_delay ...
+        $delay = $this->config->retryDelay * (1 << max(0, $attempt - 1));
 
         if ($e instanceof RequestException && is_numeric($retryAfter = $e->response->header('Retry-After'))) {
             $delay = (int) $retryAfter * 1000;

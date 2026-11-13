@@ -16,7 +16,7 @@ class CatalogBatchingServiceTest extends TestCase
 {
     private function batching(): CatalogBatchingService
     {
-        return $this->app->make(CatalogBatchingService::class);
+        return app(CatalogBatchingService::class);
     }
 
     public function test_patch_items_goes_to_the_batching_host_with_basic_auth(): void
@@ -81,7 +81,7 @@ class CatalogBatchingServiceTest extends TestCase
         $sizes = Http::recorded()->map(fn (array $pair) => count($pair[0]->data()['items']))->all();
         $this->assertSame([100, 100, 50], $sizes);
 
-        [$first] = Http::recorded()[0];
+        $first = $this->sentRequests()[0];
         $this->assertSame('DELETE', $first->method());
         $this->assertSame(['id' => 'SKU-1'], $first->data()['items'][0]);
     }
@@ -93,8 +93,7 @@ class CatalogBatchingServiceTest extends TestCase
         $this->batching()->patchVariations([['id' => 'TRG-780-LP', 'item_id' => 'TRG-780', 'in_stock' => true]], 'Variations Section');
         $this->batching()->deleteVariations(['TRG-780-NG']);
 
-        [$patch] = Http::recorded()[0];
-        [$delete] = Http::recorded()[1];
+        [$patch, $delete] = $this->sentRequests();
 
         $this->assertSame('PATCH', $patch->method());
         $this->assertSame('/v2/variations', $this->pathOf($patch));

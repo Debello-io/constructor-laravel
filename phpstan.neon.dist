@@ -2,15 +2,15 @@
 # Run with: composer analyse
 includes:
     - vendor/larastan/larastan/extension.neon
+    # Understands PHPUnit assertions (assertNotNull narrows the type, ...).
+    - vendor/phpstan/phpstan-phpunit/extension.neon
 
 parameters:
-    # Goal: level 8 (nullability and list/array precision). Raise it once the
-    # remaining level 7-8 findings in src are fixed.
-    level: 6
+    # Level 8: full type checks including nullability and list precision.
+    level: 8
     paths:
         - src
-        # tests/ is not analysed yet: it still has a dozen level-6 findings
-        # (untyped fixture arrays, Scout test models). Add it once they are fixed.
+        - tests
     # The 1.x alias stubs declare classes inside `if (false)` purely for IDEs.
     excludePaths:
         - src/Services/Search/ConstructorSandboxSearch.php
@@ -27,3 +27,9 @@ parameters:
             identifier: method.notFound
             path: src/Scout/ConstructorEngine.php
             message: '#^Call to an undefined method Illuminate\\Database\\Eloquent\\Model::(getScoutKey|getScoutModelsByIds|queryScoutModelsByIds|toSearchableArray|scoutMetadata)\(\)\.$#'
+        # Scout also adds searchable() / unsearchable() to Eloquent collections
+        # as macros, which static analysis can't see.
+        -
+            identifier: method.notFound
+            path: tests/Feature/ScoutEngineTest.php
+            message: '#^Call to an undefined method Illuminate\\Database\\Eloquent\\Collection<int, ConstructorIO\\Laravel\\Tests\\Feature\\(Grill|Smoker)>::(searchable|unsearchable)\(\)\.$#'

@@ -16,13 +16,15 @@ class QuizServiceTest extends TestCase
 {
     private function quizzes(): QuizService
     {
-        return $this->app->make(QuizService::class);
+        return app(QuizService::class);
     }
 
     /**
      * The guide's single-select example, which uses `options`.
      *
      * @see https://docs.constructor.com/reference/configuration-quizzes
+     *
+     * @return array<string, mixed>
      */
     private function nextQuestionResponse(): array
     {
@@ -114,6 +116,7 @@ class QuizServiceTest extends TestCase
         $step = $this->quizzes()->getNextQuestion('grill-finder');
 
         $this->assertCount(2, $step->options());
+        $this->assertNotNull($step->question);
         $this->assertArrayNotHasKey('option', $step->question);
     }
 
