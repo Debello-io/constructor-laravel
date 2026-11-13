@@ -3,13 +3,16 @@
 namespace ConstructorIO\Laravel\Tests\Feature;
 
 use ConstructorIO\Laravel\ConstructorServiceProvider;
+use ConstructorIO\Laravel\DataTransferObjects\SearchResults;
 use ConstructorIO\Laravel\Exceptions\ApiException;
 use ConstructorIO\Laravel\Exceptions\ConstructorException;
 use ConstructorIO\Laravel\Scout\ConstructorEngine;
 use ConstructorIO\Laravel\Scout\ConstructorSearchable;
 use ConstructorIO\Laravel\Scout\SearchResultCollection;
+use ConstructorIO\Laravel\Support\ConstructorConfig;
 use ConstructorIO\Laravel\Tests\TestCase;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Http\Client\Request;
 use Illuminate\Support\Facades\Http;
@@ -40,6 +43,44 @@ class ScoutEngineTest extends TestCase
             $table->string('name');
             $table->decimal('price');
             $table->string('brand');
+        });
+
+        Schema::create('smokers', function (Blueprint $table) {
+            $table->id();
+            $table->string('name');
+            $table->softDeletes();
+        });
+    }
+
+    /**
+     * Change config after boot: forget the cached config and Scout drivers
+     * so the engine is rebuilt with the new values.
+     *
+     * @param  array<string, mixed>  $values
+     */
+    private function reconfigureScout(array $values): void
+    {
+        config($values);
+        $this->app->forgetInstance(ConstructorConfig::class);
+        $this->app->make(EngineManager::class)->forgetDrivers();
+    }
+
+    /**
+     * Fake search responses that return as many results as were asked for
+     * (by num_results_per_page), numbered from the requested offset, out of $total.
+     */
+    private function fakeSearchReturningRequestedCount(int $total): void
+    {
+        Http::fake(function (Request $request) use ($total) {
+            $query = $this->queryOf($request);
+            $perPage = (int) $query['num_results_per_page'][0];
+            $offset = isset($query['offset']) ? (int) $query['offset'][0] : ((int) ($query['page'][0] ?? 1) - 1) * $perPage;
+            $count = max(0, min($perPage, $total - $offset));
+
+            return Http::response(['response' => [
+                'total_num_results' => $total,
+                'results' => array_map(fn (int $i) => ['data' => ['id' => (string) ($offset + $i + 1)]], range(0, $count - 1)),
+            ]]);
         });
     }
 
@@ -209,6 +250,109 @@ class ScoutEngineTest extends TestCase
         $this->assertSame([2, 3], Grill::search('grill')->cursor()->pluck('id')->all());
     }
 
+    public function test_soft_deleted_models_are_flagged_and_searches_filter_them_out(): void
+    {
+        $this->reconfigureScout(['scout.soft_delete' => true]);
+        Smoker::withoutSyncingToSearch(function () {
+            Smoker::create(['name' => 'Offset Smoker']);
+            Smoker::create(['name' => 'Old Smoker'])->delete();
+        });
+        Http::fake(fn (Request $request) => $request->method() === 'GET'
+            ? Http::response($this->searchResponse(['1'], 1))
+            : Http::response(['task_id' => 1, 'task_status_path' => '/v1/tasks/1']));
+
+        Smoker::withTrashed()->get()->searchable();
+
+        Http::assertSent(function (Request $request) {
+            if ($request->method() !== 'PUT') {
+                return false;
+            }
+
+            $this->assertSame([
+                ['id' => '1', 'name' => 'Offset Smoker', 'data' => ['__soft_deleted' => '0']],
+                ['id' => '2', 'name' => 'Old Smoker', 'data' => ['__soft_deleted' => '1']],
+            ], $request->data()['items']);
+
+            return true;
+        });
+
+        $this->assertSame([1], Smoker::search('smoker')->get()->pluck('id')->all());
+
+        Http::assertSent(fn (Request $request) => ($this->queryOf($request)['filters[__soft_deleted]'] ?? null) === ['0']);
+    }
+
+    public function test_where_in_with_no_values_matches_nothing(): void
+    {
+        Http::fake();
+
+        $this->assertCount(0, Grill::search('grill')->whereIn('brand', [])->get());
+        Http::assertNothingSent();
+    }
+
+    public function test_take_above_the_per_request_limit_fetches_consecutive_batches(): void
+    {
+        $this->fakeSearchReturningRequestedCount(total: 1000);
+
+        $keys = Grill::search('grill')->take(450)->keys();
+
+        $this->assertCount(450, $keys);
+        $this->assertSame('1', $keys->first());
+        $this->assertSame('450', $keys->last());
+
+        $requests = array_map(fn (array $pair) => [
+            $this->queryOf($pair[0])['offset'][0],
+            $this->queryOf($pair[0])['num_results_per_page'][0],
+        ], Http::recorded()->all());
+        $this->assertSame([['0', '200'], ['200', '200'], ['400', '50']], $requests);
+    }
+
+    public function test_batched_fetching_stops_when_results_run_out(): void
+    {
+        $this->fakeSearchReturningRequestedCount(total: 250);
+
+        $this->assertCount(250, Grill::search('grill')->take(1000)->keys());
+        Http::assertSentCount(2);
+    }
+
+    public function test_paginator_total_with_a_query_callback_counts_beyond_200(): void
+    {
+        Grill::withoutSyncingToSearch(function () {
+            foreach (range(1, 300) as $i) {
+                Grill::create(['name' => "Grill {$i}", 'price' => 100, 'brand' => 'Weber']);
+            }
+        });
+        $this->fakeSearchReturningRequestedCount(total: 300);
+
+        $paginator = Grill::search('grill')->query(fn ($query) => $query->where('price', '>', 0))->paginate(24);
+
+        $this->assertSame(300, $paginator->total());
+    }
+
+    public function test_map_ids_keeps_the_id_zero(): void
+    {
+        $engine = $this->app->make(EngineManager::class)->engine('constructor');
+        $results = new SearchResults(products: [['id' => '0'], ['id' => '5'], ['id' => null], ['id' => '']], total: 4, page: 1, perPage: 24);
+
+        $this->assertSame(['0', '5'], $engine->mapIds($results)->all());
+    }
+
+    public function test_patch_sync_mode_only_changes_the_fields_the_model_sends(): void
+    {
+        $this->reconfigureScout(['constructor.scout.sync_mode' => 'patch']);
+        $this->createGrills();
+        Http::fake(['*' => Http::response(['task_id' => 3, 'task_status_path' => '/v1/tasks/3'])]);
+
+        Grill::all()->searchable();
+
+        Http::assertSent(function (Request $request) {
+            $this->assertSame('PATCH', $request->method());
+            $this->assertSame('/v2/items', $this->pathOf($request));
+            $this->assertSame(['CREATE'], $this->queryOf($request)['on_missing']);
+
+            return true;
+        });
+    }
+
     public function test_create_index_explains_that_indexes_live_in_the_dashboard(): void
     {
         $this->expectException(ConstructorException::class);
@@ -243,5 +387,23 @@ class Grill extends Model implements ConstructorSearchable
             'brand' => $this->brand,
             'url' => "/grills/{$this->id}",
         ];
+    }
+}
+
+/**
+ * Test model with soft deletes and Scout's defaults (no ConstructorSearchable).
+ */
+class Smoker extends Model
+{
+    use Searchable;
+    use SoftDeletes;
+
+    protected $guarded = [];
+
+    public $timestamps = false;
+
+    public function toSearchableArray(): array
+    {
+        return ['name' => $this->name];
     }
 }

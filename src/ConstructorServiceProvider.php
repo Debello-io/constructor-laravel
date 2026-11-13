@@ -2,6 +2,8 @@
 
 namespace ConstructorIO\Laravel;
 
+use ConstructorIO\Laravel\Collections\SearchResultCollection;
+use ConstructorIO\Laravel\Contracts\SandboxSearchContract;
 use ConstructorIO\Laravel\Contracts\SearchProvider;
 use ConstructorIO\Laravel\Http\ApiClient;
 use ConstructorIO\Laravel\Scout\ConstructorEngine;
@@ -18,6 +20,7 @@ use Illuminate\Contracts\Foundation\Application;
 use Illuminate\Cookie\Middleware\EncryptCookies;
 use Illuminate\Support\ServiceProvider;
 use Laravel\Scout\EngineManager;
+use Laravel\Scout\Engines\Engine;
 
 /**
  * Registers the package's services, the facade target, the published config
@@ -83,12 +86,55 @@ class ConstructorServiceProvider extends ServiceProvider
     }
 
     /**
-     * Keep 1.x class names resolvable from the container.
+     * 1.x service names that resolve from the container, and the 2.0
+     * binding each one now points to.
+     *
+     * @var array<class-string, class-string>
+     */
+    private const DEPRECATED_SERVICES = [
+        ConstructorSandboxSearch::class => Constructor::class,
+        SandboxSearchContract::class => Constructor::class,
+        ConstructorAgentService::class => AgentService::class,
+        ConstructorService::class => CatalogService::class,
+    ];
+
+    /**
+     * 1.x Scout class names. Only loaded when Scout is installed, because
+     * their 2.0 classes extend Scout's.
+     *
+     * @var list<class-string>
+     */
+    private const DEPRECATED_SCOUT_CLASSES = [
+        Search\ConstructorEngine::class,
+        SearchResultCollection::class,
+    ];
+
+    /**
+     * Keep 1.x class names working.
+     *
+     * Each old name is a stub file that calls class_alias(). PHP does not
+     * autoload a class for a type-hint check or `instanceof`, so a stub that
+     * was never autoloaded would make `function (ConstructorService $x)`
+     * fail. Loading the stubs here, up front, avoids that. The container
+     * aliases make app(OldName::class) return the same singleton as the new name.
      */
     protected function registerDeprecatedAliases(): void
     {
-        $this->app->alias(Constructor::class, ConstructorSandboxSearch::class);
-        $this->app->alias(AgentService::class, ConstructorAgentService::class);
-        $this->app->alias(CatalogService::class, ConstructorService::class);
+        foreach (self::DEPRECATED_SERVICES as $oldName => $binding) {
+            $this->loadAlias($oldName);
+            $this->app->alias($binding, $oldName);
+        }
+
+        if (class_exists(Engine::class)) {
+            array_map(fn (string $oldName) => $this->loadAlias($oldName), self::DEPRECATED_SCOUT_CLASSES);
+        }
+    }
+
+    /**
+     * Autoload a stub file so its class_alias() runs.
+     */
+    private function loadAlias(string $oldName): void
+    {
+        class_exists($oldName) || interface_exists($oldName);
     }
 }

@@ -1,5 +1,6 @@
 ---
 name: release
+disable-model-invocation: true
 description: Prepare a new version of this package - choose the semantic version, finalize CHANGELOG.md, write UPGRADE.md notes for breaking changes, run checks, and prepare (but not push) the git tag. Use when asked to "cut a release", "bump the version" or "prepare vX.Y.Z".
 ---
 
@@ -41,7 +42,10 @@ Show the user:
 - the commands you will run:
 
 ```bash
-git commit -am "Release vX.Y.Z"
+git status            # review: only the release files should be changed
+git add -A
+git diff --cached     # show the user what will be committed
+git commit -m "Release vX.Y.Z"
 git tag -a vX.Y.Z -m "vX.Y.Z"
 git push origin <branch> --follow-tags
 ```

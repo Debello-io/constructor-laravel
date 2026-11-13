@@ -5,6 +5,10 @@ on:
     branches: [main]
   pull_request:
 
+# Actions are pinned to major-version tags for readability. For stronger
+# supply-chain guarantees, pin each one to a full commit SHA (with the tag in
+# a trailing comment) and let Dependabot keep them current.
+
 permissions:
   contents: read
 
@@ -23,6 +27,20 @@ jobs:
         with:
           php-version: '8.4'
           coverage: none
+
+      - name: Get Composer cache directory
+        id: composer-cache
+        run: echo "dir=$(composer config cache-files-dir)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Composer downloads
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.composer-cache.outputs.dir }}
+          key: composer-quality-${{ hashFiles('composer.json') }}
+          restore-keys: composer-quality-
+
+      - name: Validate composer.json
+        run: composer validate --strict
 
       - name: Install dependencies
         run: composer update --prefer-dist --no-interaction --no-progress
@@ -68,6 +86,17 @@ jobs:
           php-version: ${{ matrix.php }}
           extensions: curl, json, mbstring
           coverage: none
+
+      - name: Get Composer cache directory
+        id: composer-cache
+        run: echo "dir=$(composer config cache-files-dir)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Composer downloads
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.composer-cache.outputs.dir }}
+          key: composer-${{ matrix.php }}-${{ matrix.laravel }}-${{ matrix.stability }}-${{ hashFiles('composer.json') }}
+          restore-keys: composer-${{ matrix.php }}-${{ matrix.laravel }}-${{ matrix.stability }}-
 
       - name: Pin Laravel ${{ matrix.laravel }}
         run: composer require "laravel/framework:^${{ matrix.laravel }}.0" "orchestra/testbench:^${{ matrix.testbench }}.0" --dev --no-update --no-interaction

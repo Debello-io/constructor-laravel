@@ -46,6 +46,8 @@ The repo ships Claude Code configuration:
 
 Personal overrides go in `.claude/settings.local.json` (git-ignored).
 
+**Untrusted pull requests:** the pre-approved test and lint commands run code from the checked-out tree (test files, composer scripts, the PHPUnit and PHPStan configs). Review an untrusted PR before running them, or run them in a sandbox.
+
 ## Pull requests
 
 - Keep each PR to one topic, with a clear description and links to the Constructor docs you relied on.

@@ -204,7 +204,7 @@ class CatalogServiceTest extends TestCase
 
     public function test_items_are_sent_in_batches(): void
     {
-        $this->app->make('config')->set('constructor.scout.batch_size', 2);
+        $this->app->make('config')->set('constructor.catalog.batch_size', 2);
         $this->app->forgetInstance(ConstructorConfig::class);
         $this->app->forgetInstance(ApiClient::class);
         $this->app->forgetInstance(CatalogService::class);
@@ -362,5 +362,39 @@ class CatalogServiceTest extends TestCase
 
         // A retried write could create a duplicate ingestion task.
         Http::assertSentCount(1);
+    }
+
+    public function test_catalog_reads_are_retried_after_a_server_error(): void
+    {
+        Http::fakeSequence('ac.cnstrc.com/*')
+            ->push('unavailable', 503)
+            ->push(['id' => 'TRG-780', 'name' => 'Pro 780']);
+
+        $this->assertSame('TRG-780', $this->app->make(CatalogService::class)->getItem('TRG-780')['id']);
+        Http::assertSentCount(2);
+    }
+
+    public function test_waiting_for_a_task_checks_one_last_time_at_the_deadline(): void
+    {
+        Sleep::fake();
+        Http::fakeSequence('ac.cnstrc.com/*')
+            ->push(['id' => 7, 'status' => 'IN_PROGRESS'])
+            ->push(['id' => 7, 'status' => 'DONE', 'result' => ['index_built' => true]]);
+
+        $status = $this->app->make(CatalogService::class)->waitForTaskCompletion(7, timeoutSeconds: 15, pollIntervalSeconds: 10);
+
+        $this->assertTrue($status['successful']);
+        $this->assertTrue($status['indexed']);
+    }
+
+    public function test_a_task_without_a_status_times_out_cleanly(): void
+    {
+        Sleep::fake();
+        Http::fake(['ac.cnstrc.com/*' => Http::response(['id' => 7])]);
+
+        $this->expectException(TaskTimeoutException::class);
+        $this->expectExceptionMessage('was still unknown');
+
+        $this->app->make(CatalogService::class)->waitForTaskCompletion(7, timeoutSeconds: 1, pollIntervalSeconds: 1);
     }
 }

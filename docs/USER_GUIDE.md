@@ -133,13 +133,13 @@ For every storefront call, the package adds these values for the current shopper
 | `ui` | Your user ID, **only for signed-in shoppers** | `auth()->id()`, or your resolver |
 | `c` | Integration identifier | `CONSTRUCTOR_CLIENT_IDENTIFIER` |
 | `_dt` | Request timestamp in milliseconds | Generated |
-| `origin_referrer` | The page the shopper is on | The current URL for page requests; the `Referer` header for AJAX/fetch calls |
+| `origin_referrer` | The page the shopper is on, **without its query string** | The current URL for page requests; the `Referer` header for AJAX/fetch calls |
 
 And these headers:
 
 | Header | Value |
 |--------|-------|
-| `User-Agent` | The shopper's browser User-Agent, unchanged |
+| `User-Agent` | The shopper's browser User-Agent, with control characters removed and capped at 512 characters |
 | `X-Forwarded-For` | The shopper's IP address (a single address) |
 | `x-cnstrc-token` | `CONSTRUCTOR_BACKEND_TOKEN` |
 
@@ -149,6 +149,8 @@ Some details worth knowing:
 - **First visit.** Before the beacon has run, there is no client ID cookie. The package generates a UUID, sends it, and sets the `ConstructorioID_client_id` cookie (readable by JavaScript) so the beacon adopts the same value. The session number defaults to `1`, as Constructor's documentation recommends. Turn generation off with `CONSTRUCTOR_GENERATE_CLIENT_ID=false`.
 - **Guests never get a `ui`.** In 1.x, the Laravel session ID was sometimes sent as `ui`. That was wrong, and it leaked a session credential. Don't pass `session()->getId()` as `session_id` either: `s` must be the beacon's session number. The package ignores values that aren't positive integers.
 - **No shopper outside HTTP requests.** In Artisan commands and queue workers, no identity or forwarded headers are sent, only `c`, `_dt` and the backend token.
+- **Query strings stay private.** `origin_referrer` never includes the page's query string, which can hold password-reset tokens, signed-URL signatures or email addresses.
+- **Your identity values always win.** Endpoint `parameters` can't replace `key`, `c`, `i`, `s` or `ui`. Change identity only through the `client_id`, `session_id` and `user_id` overrides.
 
 ### Choosing what is sent as `ui`
 
@@ -180,7 +182,11 @@ Constructor::resolveConsentUsing(function (?Request $request) {
 });
 ```
 
-When it returns `false`, `i` is left out and no client ID cookie is created. Results for that shopper are not personalized.
+When it returns `false`, `i` is left out and no client ID cookie is created. Results for that shopper are not personalized. This also applies to a `client_id` you pass explicitly as an override.
+
+Without a resolver, the package assumes consent. For sites that need opt-in consent (for example under GDPR), set `CONSTRUCTOR_REQUIRE_CONSENT=true` (`identity.require_consent`): shoppers then count as not consenting until your resolver says otherwise.
+
+Without consent, `ui`, `s`, the IP address and the User-Agent are still sent. Constructor's documentation only requires omitting `i`; check with your legal team whether that is enough for you.
 
 Consent banners often set their cookie from JavaScript, unencrypted. Add its name to `EncryptCookies::except([...])` (for example in `bootstrap/app.php` with `$middleware->encryptCookies(except: ['cookie_consent'])`), or `cookie()` will return `null`.
 
@@ -204,7 +210,7 @@ Then check a live request: the IP Constructor receives must be the shopper's, no
 
 ### Pass `result_id` to the page
 
-Every search, browse, autocomplete and recommendation response includes a `result_id`. The beacon's "results loaded" event must carry it, or Constructor cannot connect what shoppers did to what it returned. Put it on the results container:
+Every search, browse, autocomplete and recommendation response includes a `result_id`. The beacon's "results loaded" event must carry it, or Constructor cannot connect what shoppers did to what it returned. Mark up the results container and each result as [Data-driven event tracking](https://docs.constructor.com/docs/integrating-with-constructor-behavioral-tracking-data-driven-event-tracking) describes. On a search page:
 
 ```blade
 <div data-cnstrc-search
@@ -215,14 +221,40 @@ Every search, browse, autocomplete and recommendation response includes a `resul
      data-cnstrc-result-page="{{ $results->page }}">
     @foreach ($results->products as $product)
         <div data-cnstrc-item-id="{{ $product['id'] }}"
-             data-cnstrc-item-name="{{ $product['name'] }}">
-            ...
+             data-cnstrc-item-name="{{ $product['name'] }}"
+             @if ($product['variation_id']) data-cnstrc-item-variation-id="{{ $product['variation_id'] }}" @endif
+             @if ($price = $product['price']) data-cnstrc-item-price="{{ $price }}" @endif>
+            <a href="{{ $product['url'] }}">{{ $product['name'] }}</a>
+            <button type="button" data-cnstrc-btn="add_to_cart">Add to cart</button>
         </div>
     @endforeach
 </div>
+
+<script id="cnstrc-data" type="application/json">@json($results->trackingData())</script>
 ```
 
-Browse pages use `data-cnstrc-browse` with `data-cnstrc-filter-name` and `data-cnstrc-filter-value` instead of the search attributes. See [Data-driven event tracking](https://docs.constructor.com/docs/integrating-with-constructor-behavioral-tracking-data-driven-event-tracking) for the full attribute list.
+The rules that are easy to miss:
+
+- `data-cnstrc-num-results` is `0` on a page with no results (keep the other attributes). Leave it out while results are still loading, so the beacon doesn't record an empty page too early.
+- `data-cnstrc-item-variation-id` defaults to the product's `variation_id`. Update it when the shopper picks a different swatch.
+- `data-cnstrc-item-price` is the lower of the sale price and the list price. Leave it out when an item has no price; never send `0` or an empty value.
+- The `cnstrc-data` script tag holds Constructor's `request` object and the `result_id` (`SearchResults::trackingData()`). Put it on search and browse result pages only. `@json` escapes the output so it can't break out of the tag.
+
+A browse (category) page uses `data-cnstrc-browse` and names the filter instead of a search term:
+
+```blade
+<div data-cnstrc-browse
+     data-cnstrc-section="Products"
+     data-cnstrc-result-id="{{ $results->resultId }}"
+     data-cnstrc-num-results="{{ $results->total }}"
+     data-cnstrc-result-page="{{ $results->page }}"
+     data-cnstrc-filter-name="group_id"
+     data-cnstrc-filter-value="{{ $category }}">
+    {{-- same result items as above --}}
+</div>
+```
+
+Recommendations have their own attributes; see [Strategy and tracking](#strategy-and-tracking). Sponsored results need two more; see [Sponsored and promoted results](#sponsored-and-promoted-results).
 
 ### Caching personalized results
 
@@ -252,7 +284,7 @@ $results = Constructor::search($request->input('q'), [], [
 ]);
 ```
 
-Every storefront method accepts `client_id`, `session_id`, `user_id` and `origin_referrer` overrides. For app traffic, set `CONSTRUCTOR_CLIENT_IDENTIFIER=cio-be-mobile-yourcompany`, and have the app send a User-Agent in the format given on [Required parameters](https://docs.constructor.com/docs/integrating-with-constructor-direct-api-integration-required-parameters).
+Every storefront method accepts `client_id`, `session_id`, `user_id` and `origin_referrer` overrides. The consent rules still apply to an overridden `client_id`, and an overridden `origin_referrer` has its query string removed. For app traffic, set `CONSTRUCTOR_CLIENT_IDENTIFIER=cio-be-mobile-yourcompany`, and have the app send a User-Agent in the format given on [Required parameters](https://docs.constructor.com/docs/integrating-with-constructor-direct-api-integration-required-parameters).
 
 ### Integration checklist
 
@@ -262,7 +294,9 @@ Before going live:
 - [ ] `CONSTRUCTOR_BACKEND_TOKEN` is set, and you see no 429 responses in your logs.
 - [ ] Trusted proxies are configured, so Constructor sees shoppers' IPs.
 - [ ] The client ID in your server's requests matches the one in the beacon's events, for the same shopper.
-- [ ] `result_id` reaches the page on search, browse and recommendation results.
+- [ ] `result_id` reaches the page on search, browse and recommendation results, and search/browse pages have the `cnstrc-data` script tag.
+- [ ] Sponsored results show a badge and carry their campaign attributes.
+- [ ] If you need opt-in consent, `CONSTRUCTOR_REQUIRE_CONSENT=true` is set and a consent resolver is registered.
 - [ ] Personalized responses are not shared between shoppers by any cache.
 - [ ] `CONSTRUCTOR_CLIENT_IDENTIFIER` uses your company name.
 
@@ -330,10 +364,12 @@ Most methods take `$filters` and `$options` arrays.
 | `variations_map` | array or string | How to group variations, e.g. for colour swatches |
 | `user_segments` | list or string | Segments used by redirect and content rules (sent as `us`) |
 | `lang` | string | Query language, e.g. `en` |
-| `parameters` | array | Any other API parameter, passed through unchanged |
+| `parameters` | array | Any other API parameter, passed through unchanged (it can't replace `key` or identity values) |
 | `user_id`, `client_id`, `session_id`, `origin_referrer` | | Identity overrides (see [section 2](#mobile-apps-calling-your-api)) |
 
 The full list is documented on `Support\ParameterBuilder`. `parameters` is the escape hatch for anything new in Constructor's API that this package doesn't name yet.
+
+Filter values must be scalars (strings, numbers, booleans). Anything else, such as a nested array from unvalidated request input, is ignored rather than sent. Validate request input before passing it in; see [A complete search controller](#a-complete-search-controller).
 
 ### What a product looks like
 
@@ -357,9 +393,13 @@ Every method that returns products uses the same flat shape:
     'matched_terms' => ['pellet'],
     'variations' => [...],
     'variations_map' => null,
-    'is_slotted' => false,        // placed by a merchandising rule
-    'labels' => [],               // e.g. ['is_sponsored' => true]
-    'strategy' => null,           // recommendations only
+    'is_slotted' => false,        // pinned in place by a merchandising rule
+    'is_sponsored' => false,      // a Sponsored Listing (labels.is_retail_media)
+    'sponsored_campaign_id' => null,
+    'sponsored_campaign_owner' => null,
+    'labels' => [],               // all labels Constructor sent, unmodified
+    'variation_slice' => null,    // when variation slicing is enabled
+    'strategy' => null,           // recommendations only, e.g. ['id' => 'complementary_items']
     '_raw' => [...],              // every catalog field, including your custom ones
 ]
 ```
@@ -372,21 +412,25 @@ $product['_raw']['cooking_area_sq_in'] ?? null;
 
 ### Sponsored and promoted results
 
-When `is_slotted` is true, a merchandising rule placed the product. If `labels['is_sponsored']` is true, it is an advertised placement and you should show a "Sponsored" badge. For sponsored listings, the beacon also needs the campaign details from `labels`:
+When `is_slotted` is true, a merchandising rule pinned the product in place. That is not an advertisement.
+
+When `is_sponsored` is true, the product is a [Sponsored Listing](https://docs.constructor.com/docs/products-retail-media-learn-about-sponsored-listings-implement-sponsored-listings): Constructor flags it with `labels.is_retail_media`. Show a "Sponsored" badge (your region may have legal requirements for the wording), and put the campaign details on the result element so the beacon can attribute the ad's views and clicks:
 
 ```blade
 <div data-cnstrc-item-id="{{ $product['id'] }}"
      data-cnstrc-item-name="{{ $product['name'] }}"
-     @isset($product['labels']['sl_campaign_id'])
-         data-cnstrc-sl-campaign-id="{{ $product['labels']['sl_campaign_id'] }}"
-         data-cnstrc-sl-campaign-owner="{{ $product['labels']['sl_campaign_owner'] ?? '' }}"
-     @endisset>
-    @if ($product['labels']['is_sponsored'] ?? false)
+     @if ($product['is_sponsored'])
+         data-cnstrc-sl-campaign-id="{{ $product['sponsored_campaign_id'] }}"
+         data-cnstrc-sl-campaign-owner="{{ $product['sponsored_campaign_owner'] }}"
+     @endif>
+    @if ($product['is_sponsored'])
         <span class="badge">Sponsored</span>
     @endif
     ...
 </div>
 ```
+
+If you use a third-party retail media platform through Constructor, its tracking properties are in `$product['labels']`.
 
 ### Return types
 
@@ -478,7 +522,9 @@ $results->nextPageNumber(); // 0 on the last page
 $results->getOffset();      // for "Showing 25–48 of 156"
 ```
 
-Constructor reports at most 10,000 total results. When `$results->isTotalCapped()` is true, show "10,000+".
+Constructor returns at most 10,000 results for one query (`SearchResults::MAX_RETRIEVABLE_RESULTS`), however many match. `totalPages()` and `hasMore()` stop at the last page that can actually be fetched, so pagination links never point past it. `$results->total` still reports every match; when `$results->exceedsRetrievableLimit()` is true, suggest a filter or a narrower query.
+
+`offset` works too: with `['offset' => 48, 'per_page' => 24]`, `$results->page` is 3.
 
 To use Laravel's paginator:
 
@@ -514,17 +560,30 @@ class SearchController extends Controller
 {
     public function __invoke(Request $request)
     {
-        $query = trim((string) $request->input('q', ''));
+        // Validate anything from the request before it becomes a filter.
+        // ?filters[brand][]=Weber&filters[fuel_type][]=Gas
+        $validated = $request->validate([
+            'q' => ['nullable', 'string', 'max:200'],
+            'filters' => ['array'],
+            'filters.*' => ['array'],
+            'filters.*.*' => ['string', 'max:200'],
+            'sort_by' => ['nullable', 'string'],
+            'sort_order' => ['nullable', 'in:ascending,descending'],
+            'price_min' => ['nullable', 'numeric'],
+            'price_max' => ['nullable', 'numeric'],
+        ]);
 
-        $results = Constructor::search($query, $request->input('filters', []), [
+        $query = trim((string) ($validated['q'] ?? ''));
+
+        $results = Constructor::search($query, $validated['filters'] ?? [], [
             'page' => $request->integer('page', 1),
             'per_page' => 24,
-            'sort_by' => $request->input('sort_by'),
-            'sort_order' => $request->input('sort_order', 'descending'),
+            'sort_by' => $validated['sort_by'] ?? null,
+            'sort_order' => $validated['sort_order'] ?? 'descending',
             'range_filters' => array_filter([
                 'price' => array_filter([
-                    'min' => $request->input('price_min'),
-                    'max' => $request->input('price_max'),
+                    'min' => $validated['price_min'] ?? null,
+                    'max' => $validated['price_max'] ?? null,
                 ]),
             ]),
         ]);
@@ -596,7 +655,8 @@ Other options:
 | Option | Meaning |
 |--------|---------|
 | `group_id` | Start from a sub-category instead of the root |
-| `depth` | How many levels to return (default 2 with children, 1 without) |
+| `depth` | How many levels to return. By default: one level, plus one to skip the "All" root (unless you pass `group_id`), plus one when `max_children` is above 0 |
+| `fmt_options` | Other formatting options; merged with the depth setting |
 | `section` | Index section |
 
 **Images.** A category's image comes from the `image_url` field in its data, if you set one in your item groups. `with_images => true` fills missing images with the first product's image, which costs **one extra request per category**. Cache the result:
@@ -619,6 +679,9 @@ $recentlyViewed = Constructor::browseItems(
 foreach ($recentlyViewed->products as $product) {
     // ...
 }
+
+// At most 100 IDs per call (Constructor's limit). More throws
+// ConstructorIO\Laravel\Exceptions\InvalidArgumentException before any request is sent.
 ```
 
 ### A category page controller
@@ -626,7 +689,13 @@ foreach ($recentlyViewed->products as $product) {
 ```php
 public function show(Request $request, string $category)
 {
-    $results = Constructor::browse('group_id', $category, $request->input('filters', []), [
+    $validated = $request->validate([
+        'filters' => ['array'],
+        'filters.*' => ['array'],
+        'filters.*.*' => ['string', 'max:200'],
+    ]);
+
+    $results = Constructor::browse('group_id', $category, $validated['filters'] ?? [], [
         'page' => $request->integer('page', 1),
         'per_page' => 24,
         'sort_by' => $request->input('sort_by'),
@@ -865,10 +934,16 @@ For "Shop by brand" or "Shop by fuel type" navigation:
 
 ```php
 $facets = Constructor::getAvailableFacets();
-// [['name' => 'brand', 'display_name' => 'Brand', 'type' => 'multiple'], ...]
+// [['name' => 'brand', 'display_name' => 'Brand', 'type' => 'checkbox_list'], ...]
 ```
 
-Hidden facets and the category facet (`group_id`) are left out; use `getBrowseGroups()` for categories.
+Every facet in the index is returned (the endpoint is paged; the package asks for up to 1,000 at once). `type` uses the same names as facets in results: `checkbox_list`, `single_select`, `range` or `hierarchical`.
+
+Hidden facets and the category facet (`group_id`) are left out; use `getBrowseGroups()` for categories. To include hidden facets, for example a store-specific one:
+
+```php
+Constructor::getAvailableFacets(['fmt_options' => ['show_hidden_facets' => true]]);
+```
 
 ### Facet options with images
 
@@ -943,20 +1018,30 @@ $fallback = Constructor::getRecommendations('no-results', ['term' => $query]);
 
 ### Strategy and tracking
 
-Each recommended product includes the `strategy` that picked it. Pass the pod ID, `resultId` and the seed item IDs (comma-separated, for item-based pods) to the page for the beacon:
+Each recommended product includes the `strategy` that picked it. The beacon needs the pod ID, `resultId`, the number of results and the seed item IDs (comma-separated, for item-based pods) on the container, and the strategy on each item:
 
 ```blade
 <section data-cnstrc-recommendations
          data-cnstrc-recommendations-pod-id="{{ $accessories->podId }}"
          data-cnstrc-result-id="{{ $accessories->resultId }}"
-         data-cnstrc-num-results="{{ $accessories->total }}"
+         data-cnstrc-num-results="{{ $accessories->count() }}"
          data-cnstrc-recommendations-seed-items="TRG-PRO780">
     <h2>{{ $accessories->title }}</h2>
     @foreach ($accessories->products as $product)
-        <div data-cnstrc-item-id="{{ $product['id'] }}"> ... </div>
+        <div data-cnstrc-item="recommendation"
+             data-cnstrc-item-id="{{ $product['id'] }}"
+             data-cnstrc-item-name="{{ $product['name'] }}"
+             @if ($product['variation_id']) data-cnstrc-item-variation-id="{{ $product['variation_id'] }}" @endif
+             data-cnstrc-strategy-id="{{ $product['strategy']['id'] ?? '' }}"
+             @if ($price = $product['price']) data-cnstrc-item-price="{{ $price }}" @endif>
+            <a href="{{ $product['url'] }}">{{ $product['name'] }}</a>
+            <button type="button" data-cnstrc-btn="add_to_cart">Add to cart</button>
+        </div>
     @endforeach
 </section>
 ```
+
+For a cart pod seeded with several items, join them: `data-cnstrc-recommendations-seed-items="{{ implode(',', $cartItemIds) }}"`. As with search results, `data-cnstrc-item-price` is the lower of sale and list price, and is left out when there's no price. See [Data-driven event tracking](https://docs.constructor.com/docs/integrating-with-constructor-behavioral-tracking-data-driven-event-tracking#recommendations).
 
 ### A Blade component
 
@@ -1008,7 +1093,7 @@ foreach ($collections as $collection) {
 }
 ```
 
-Each collection has `id`, `name`, `description` and `image` (both taken from the collection's custom data), `data`, `start_time` and `end_time`. Options: `max_items`, `page`, `sort_by` (`id` or `display_name`), `sort_order` and `section`.
+Each collection has `id`, `name`, `description` and `image` (both taken from the collection's custom data), `data`, `start_time`, `end_time` and `active_overriding_collection` (the collection currently shown in its place, when you use content scheduling). Options: `max_items`, `page`, `sort_by` (`id` or `display_name`), `sort_order` (default `descending`) and `section`.
 
 ### One collection's details
 
@@ -1115,7 +1200,9 @@ Route::get('/assistant/stream', function (Request $request) {
 
         try {
             Constructor::agent()->askShoppingAgentStreaming($query, function (string $event, array $data) use ($send) {
-                // Forward what the UI needs. 'complete' repeats everything, so skip it.
+                // Forward an allowlist only. Never forward 'complete' (it carries
+                // _raw, which can include hidden catalog fields such as cost
+                // prices) or events you haven't reviewed.
                 if (in_array($event, ['start', 'message', 'products', 'follow_up', 'end'], true)) {
                     $send($event, $data);
                 }
@@ -1158,7 +1245,9 @@ The callback receives these events, in order:
 
 Events the package doesn't know yet are passed through with Constructor's name and data, so new API features reach you without an upgrade.
 
-The stream may run for up to `CONSTRUCTOR_STREAM_TIMEOUT` seconds (default 120). Make sure your PHP-FPM / web server timeouts allow that.
+**Render agent output safely.** The agent's text, product names and links can be influenced by what shoppers type (prompt injection). Insert text with `textContent` (as above), never `innerHTML`, and check that any URL you render is `https:` and points to a domain you expect before using it in a link or image.
+
+**Timeouts.** `CONSTRUCTOR_STREAM_TIMEOUT` (default 120) is the **total** time an agent answer may take, including keep-alive pings; after that the package stops reading and throws `ConnectionException`. It also throws `ConnectionException` if the stream is cut off before Constructor's `end` event, so you never mistake a partial answer for a complete one. Make sure your PHP-FPM / web server timeouts allow the full duration.
 
 ### Product Insights Agent
 
@@ -1220,9 +1309,10 @@ Constructor ranks and personalizes results by learning from shopper behavior. **
 
 What the server side must do:
 
-1. **Expose `result_id`** from every search, browse, autocomplete and recommendation response to the page, as shown in [section 2](#pass-result_id-to-the-page). It is required on results-loaded events.
+1. **Expose `result_id`** from every search, browse, autocomplete and recommendation response to the page, as shown in [section 2](#pass-result_id-to-the-page). It is required on results-loaded events. On search and browse pages, also add the `cnstrc-data` script tag with `@json($results->trackingData())`.
 2. **Use the same client and session IDs as the beacon.** The package does this by reading the beacon's cookies (see [section 2](#shopper-identity-what-is-sent-with-each-request)).
-3. **Mark up results** with item IDs (`data-cnstrc-item-id`) so clicks and add-to-cart events can be attributed.
+3. **Mark up results** with item ID, name, variation ID and price (`data-cnstrc-item-*`), and conversion buttons with `data-cnstrc-btn="add_to_cart"`, so clicks and add-to-cart events can be attributed. Recommendations also need `data-cnstrc-item="recommendation"` and `data-cnstrc-strategy-id` ([section 8](#strategy-and-tracking)).
+4. **Sponsored results** need `data-cnstrc-sl-campaign-id` and `data-cnstrc-sl-campaign-owner` ([section 3](#sponsored-and-promoted-results)).
 
 For AI agent results, track agent views and clicks with the JavaScript client's `trackAgent*` methods, using the `intent_result_id` and per-product `result_id` returned by `askShoppingAgent()`.
 
@@ -1325,8 +1415,11 @@ if ($task['successful']) {
 | `successful` | True only for `DONE` |
 | `error` | Failure details, if any |
 | `warnings` | Ingestion warnings, if any |
+| `indexed` | Whether the search index has been rebuilt with the change (`result.index_built`), or `null` if Constructor didn't say |
 
-Task IDs must be positive integers; anything else throws `InvalidCatalogDataException`.
+`DONE` means the change was ingested, not necessarily that it is searchable yet. If you need to know when shoppers can see it, check `indexed`.
+
+The final status check happens at the deadline, so a task that finishes in the last poll interval is still reported as done. Task IDs must be positive integers; anything else throws `InvalidCatalogDataException`.
 
 ### Update individual items
 
@@ -1356,7 +1449,9 @@ $catalog->patchItems([
 $catalog->deleteItems(['DISCONTINUED-1', 'DISCONTINUED-2']);
 ```
 
-Each method takes an optional `$section` and `$options` (`force`, `notification_email`; `on_missing` for `patchItems`). Lists are sent in batches of `CONSTRUCTOR_SCOUT_BATCH_SIZE` (default 1,000, at most 10,000), and the methods return one task result per batch. Items without an `id` (or a `name`, for `upsertItems`) throw `InvalidCatalogDataException` before anything is sent.
+Each method takes an optional `$section` and `$options` (`force`, `notification_email`; `on_missing` for `patchItems`). Lists are sent in batches of `CONSTRUCTOR_CATALOG_BATCH_SIZE` (`catalog.batch_size`, default 1,000, at most 10,000; the older `scout.batch_size` key is still read), and the methods return one task result per batch.
+
+Writes and uploads are sent **exactly once**: a retried write after a timeout could start a second ingestion task. Catalog reads (`getItem()`, `listItems()`, `getTaskStatus()`) are retried like storefront calls. Items without an `id` (or a `name`, for `upsertItems`) throw `InvalidCatalogDataException` before anything is sent.
 
 ### Read items
 
@@ -1433,7 +1528,7 @@ $results = Constructor::browseRecipes('meal_type', 'dinner');
 $recipe = Constructor::getRecipe('texas-brisket');   // null if not found
 ```
 
-They behave like `search()` and `browse()` with `'section' => 'Recipes'`. Pass a different `section` in the options if yours is named differently. `getRecipe()` fetches the recipe by ID.
+They behave like `search()` and `browse()` with `'section' => 'Recipes'`. Pass a different `section` in the options if yours is named differently. `getRecipe($recipeId, $options)` fetches the recipe by ID; pass `['section' => 'Your Section']` if it isn't `Recipes`.
 
 `supportsRecipes()` (and the other `supports*()` methods) exist for code written against several search providers. Constructor supports all of them.
 
@@ -1441,10 +1536,10 @@ They behave like `search()` and `browse()` with `'section' => 'Recipes'`. Pass a
 
 ## 14. Laravel Scout
 
-Install Scout and set the driver:
+Install Scout 11 or later and set the driver:
 
 ```bash
-composer require laravel/scout
+composer require laravel/scout:^11.0
 ```
 
 ```env
@@ -1497,6 +1592,8 @@ class Product extends Model implements ConstructorSearchable
 
 Both methods are optional. Without `getConstructorSection()`, the default section is used. To index by SKU instead of the primary key, override `getScoutKey()` and `getScoutKeyName()` on the model.
 
+`getConstructorSection()` must not depend on attributes other than the model's key or class. Queued deletes restore models with only their keys loaded, so a section worked out from another attribute could point the delete at the wrong section.
+
 ### Searching
 
 ```php
@@ -1514,6 +1611,8 @@ $products = Product::search('pellet grill')
 - Searches go through `SearchService`, so they carry the shopper's identity and the backend token, like `Constructor::search()`.
 - Results are your Eloquent models, loaded from the database in Constructor's ranking order.
 - An empty query returns no results. Use `Constructor::browse()` for listing pages.
+- `whereIn('field', [])` matches nothing, so it returns no results without calling Constructor.
+- `take()`, and Scout's total count when you use a `query()` callback, can ask for more than Constructor's 200 per request. The engine fetches the extra results in batches of 200, up to Constructor's 10,000-result limit.
 
 `get()` returns a `Scout\SearchResultCollection`, an Eloquent collection with Constructor's extras:
 
@@ -1535,6 +1634,17 @@ php artisan scout:flush "App\Models\Product"
 
 Saving and deleting models syncs them through `/v2/items` in batches. With `SCOUT_QUEUE=true`, syncing runs in your queue, and because indexing errors are thrown, failed jobs are retried by the queue.
 
+`CONSTRUCTOR_SCOUT_SYNC_MODE` (`scout.sync_mode`) controls what a model save does:
+
+| Mode | Request | Effect |
+|------|---------|--------|
+| `replace` (default) | `PUT /v2/items` | The item is replaced with exactly what the model sends |
+| `patch` | `PATCH /v2/items` with `on_missing=CREATE` | Only the fields the model sends change. Fields set by other feeds (inventory, merchandising data) are kept, and missing items are created |
+
+Use `patch` when other systems also write to the same items.
+
+**Soft deletes.** With `scout.soft_delete` enabled and a model using `SoftDeletes`, each item gets `data.__soft_deleted` (`"0"` or `"1"`), and searches filter on it the way Scout expects, including `withTrashed()` and `onlyTrashed()`. Configure `__soft_deleted` as a **hidden facet** in the Constructor dashboard so the filter works and shoppers never see it.
+
 `scout:index` and `scout:delete-index` are not supported: Constructor indexes are created in the dashboard. They throw a `ConstructorException` explaining this.
 
 For a full initial load of a large catalog, a catalog file upload ([section 12](#12-catalog-management)) is faster than `scout:import`.
@@ -1550,7 +1660,7 @@ Returned by `search()`, `browse()`, `browseItems()`, `browseCollection()`, `sear
 | Property | Type | Meaning |
 |----------|------|---------|
 | `products` | list | Products (see [What a product looks like](#what-a-product-looks-like)) |
-| `total` | int | Matches across all pages (capped at 10,000) |
+| `total` | int | Matches across all pages (can exceed the 10,000 results that can be fetched) |
 | `page` | int | Current page |
 | `perPage` | int | Results per page |
 | `facets` | array | Facets keyed by name |
@@ -1560,17 +1670,19 @@ Returned by `search()`, `browse()`, `browseItems()`, `browseCollection()`, `sear
 | `sortOptions` | list | Sort options configured in the dashboard |
 | `refinedContent` | list | Content rules that matched |
 | `relatedSearches` | list | Related search terms |
-| `metadata` | array | `request_id`, `result_id`, `experiments`, and when present `collection`, `features`, `result_sources` |
+| `relatedBrowsePages` | list | Related category/browse pages, when enabled |
+| `metadata` | array | `request` (Constructor's interpretation of the request), `request_id`, `result_id`, `experiments`, and when present `collection`, `features`, `result_sources` |
 
 | Method | Returns |
 |--------|---------|
 | `isRedirect()` / `redirectUrl()` | Whether to redirect, and where |
-| `hasMore()` | Whether there is another page |
-| `totalPages()` | Number of pages |
+| `trackingData()` | `request` and `result_id` for the page's `cnstrc-data` script tag |
+| `hasMore()` | Whether there is another page that can be fetched |
+| `totalPages()` | Number of pages that can be fetched (stops at `SearchResults::MAX_RETRIEVABLE_RESULTS`, 10,000 results) |
 | `nextPageNumber()` | Next page, or 0 |
 | `getOffset()` | Results before this page |
 | `isEmpty()` / `count()` | Products on this page |
-| `isTotalCapped()` | Whether `total` reached `SearchResults::MAX_REPORTED_TOTAL` (10,000) |
+| `exceedsRetrievableLimit()` | Whether more results match than can be paged through (more than 10,000) |
 | `toArray()` | Everything, with snake_case keys |
 | `SearchResults::empty($page, $perPage)` | An empty result |
 
@@ -1584,11 +1696,12 @@ Returned by `autocomplete()` and `getZeroStateData()`.
 | `products` | Product previews |
 | `categories` | `id`, `name`, `path`, `count` |
 | `popularProducts`, `topCategories` | Zero-state content |
-| `trending` | Reserved for trending searches; not populated by Constructor today |
+| `trending` | Kept for 1.x compatibility; Constructor has no trending-searches endpoint, so it is always empty |
 | `sections` | Every section exactly as Constructor returned it |
-| `metadata` | `request_id`, `result_id`, `experiments` |
+| `resultId` | Pass to the page for tracking |
+| `metadata` | `request`, `request_id`, `result_id`, `experiments`, `total_num_results_per_section` |
 
-Methods: `hasSuggestions()`, `hasProducts()`, `hasCategories()`, `hasTrending()`, `hasPopularProducts()`, `hasTopCategories()`, `hasZeroStateData()`, `isEmpty()`, `isAutocompleteEmpty()` (ignores zero-state content), `toArray()`, and the factories `AutocompleteResults::empty()` and `AutocompleteResults::zeroState(...)`.
+Methods: `hasSuggestions()`, `hasProducts()`, `hasCategories()`, `hasTrending()`, `hasPopularProducts()`, `hasTopCategories()`, `hasZeroStateData()`, `isEmpty()`, `isAutocompleteEmpty()` (ignores zero-state content), `toArray()` (camelCase keys, for compatibility with 1.x front ends), and the factories `AutocompleteResults::empty()` and `AutocompleteResults::zeroState(...)`.
 
 ### RecommendationResults
 
@@ -1601,7 +1714,7 @@ Returned by `getRecommendations()` and `getItemRecommendations()`.
 | `products` | Recommended products, each with `strategy` |
 | `total` | Total available |
 | `resultId` | Pass to the page for tracking |
-| `metadata` | `request_id`, `result_id`, `pod`, `experiments` |
+| `metadata` | `request`, `request_id`, `result_id`, `pod`, `experiments` |
 
 Methods: `isEmpty()`, `hasRecommendations()`, `count()`, `toArray()`, `RecommendationResults::empty($podId)`.
 
@@ -1625,7 +1738,7 @@ Storefront reads fail gracefully so a brief Constructor outage degrades a page i
 CONSTRUCTOR_THROW_EXCEPTIONS=true
 ```
 
-Logs go to `CONSTRUCTOR_LOG_CHANNEL` (or your default channel). They include the operation, exception class and HTTP status, never credentials or shopper identifiers.
+Logs go to `CONSTRUCTOR_LOG_CHANNEL` (or your default channel). They include the operation, exception class and HTTP status, never credentials, shopper identifiers or Constructor's response body. Exception messages follow the same rule: connection errors drop the request URL, and `ApiException` messages never include the response body (it can echo search terms or filter values). Use `$e->getResponseBody()` when you need it for debugging.
 
 ### Exceptions
 
@@ -1635,9 +1748,10 @@ All exceptions extend `ConstructorIO\Laravel\Exceptions\ConstructorException`:
 |-----------|------|
 | `ConfigurationException` | A required setting is missing |
 | `ConnectionException` | Constructor couldn't be reached, or a stream was interrupted |
-| `ApiException` | Constructor returned an error status. `getStatusCode()`, `getResponseBody()` |
+| `ApiException` | Constructor returned an error status. `getStatusCode()`, `getResponseBody()` (the body is never in the message) |
 | `AuthenticationException` (extends `ApiException`) | 401: wrong key or token. 403: the token lacks permission |
 | `RateLimitException` (extends `ApiException`) | 429: throttled. On storefront traffic, usually a missing `CONSTRUCTOR_BACKEND_TOKEN` |
+| `InvalidArgumentException` | An argument Constructor would reject, caught before sending (e.g. more than 100 IDs for `browseItems()`) |
 | `InvalidCatalogDataException` | Catalog data rejected before sending (missing item ID or name, missing file, unknown operation, bad task ID) |
 | `TaskTimeoutException` | A catalog task didn't finish within the timeout |
 
@@ -1659,14 +1773,16 @@ try {
 
 ### Retries and timeouts
 
-Only failures that might succeed on a second try are retried: connection errors, 429 and 5xx responses. Other 4xx errors (bad parameters, unknown pod) are never retried.
+Only failures that might succeed on a second try are retried: connection errors, 429 and 5xx responses, and only for reads. Other 4xx errors (bad parameters, unknown pod) are never retried, and neither are catalog writes or uploads, because a repeated write could start a second ingestion task.
 
 | Setting | Default | Meaning |
 |---------|---------|---------|
-| `CONSTRUCTOR_RETRY_ATTEMPTS` | 2 | Total attempts per request |
-| `CONSTRUCTOR_RETRY_DELAY` | 100 | Milliseconds before the first retry; doubles each time |
+| `CONSTRUCTOR_RETRY_ATTEMPTS` | 2 | Total attempts per request, at most 5 |
+| `CONSTRUCTOR_RETRY_DELAY` | 100 | Milliseconds before the first retry; doubles each time, or follows the `Retry-After` header on a 429. Never more than 5 seconds |
 | `CONSTRUCTOR_TIMEOUT` | 10 | Seconds for a normal request |
-| `CONSTRUCTOR_STREAM_TIMEOUT` | 120 | Seconds for a streaming agent response |
+| `CONSTRUCTOR_STREAM_TIMEOUT` | 120 | Total seconds for a streaming agent response, including keep-alive pings |
+
+`CONSTRUCTOR_SEARCH_BASE_URL` and `CONSTRUCTOR_AGENT_BASE_URL` must use `https://`, because requests carry secret tokens. Plain `http://` is accepted only for `localhost` (for a local mock server); anything else throws `ConfigurationException`.
 
 ---
 
@@ -1796,9 +1912,9 @@ Tinker runs in the console, so no shopper identity is sent: results are not pers
 
 ## 18. Troubleshooting
 
-### "CONSTRUCTOR_API_KEY is not set"
+### "CONSTRUCTOR_API_KEY is not set" (or "must be an https URL")
 
-A `ConfigurationException` names the missing setting. Check `.env`, then clear cached config:
+A `ConfigurationException` names the missing or invalid setting. Check `.env`, then clear cached config:
 
 ```bash
 php artisan config:clear
@@ -1806,7 +1922,7 @@ php artisan config:clear
 
 ### Search returns no results
 
-1. Set `CONSTRUCTOR_THROW_EXCEPTIONS=true` temporarily to see the real error, or check the log for "Constructor search failed".
+1. Set `CONSTRUCTOR_THROW_EXCEPTIONS=true` temporarily and inspect `$e->getResponseBody()` to see Constructor's error, or check the log for "Constructor search failed".
 2. Check that `CONSTRUCTOR_API_KEY` is the key of the index that holds your catalog.
 3. Check the section: the default is `Products`. Set `CONSTRUCTOR_SECTION` if yours differs.
 4. Remove filters. A filter name that isn't a facet in your index causes a 400 error.
@@ -1836,7 +1952,7 @@ On storefront traffic, this almost always means `CONSTRUCTOR_BACKEND_TOKEN` is m
 - `ConfigurationException`: set `CONSTRUCTOR_AGENT_DOMAIN`.
 - `AuthenticationException`: check that the API key and agent domain belong together.
 - No `thread_id`: threads are only issued for conversational agent domains.
-- Streams cut off: raise `CONSTRUCTOR_STREAM_TIMEOUT`, PHP's `max_execution_time` and your web server's proxy timeouts, and disable response buffering (`X-Accel-Buffering: no` for nginx).
+- `ConnectionException` mid-answer: the answer took longer than `CONSTRUCTOR_STREAM_TIMEOUT` in total, or the stream ended before Constructor's `end` event. Raise `CONSTRUCTOR_STREAM_TIMEOUT`, PHP's `max_execution_time` and your web server's proxy timeouts, and disable response buffering (`X-Accel-Buffering: no` for nginx).
 
 ### Catalog uploads
 
@@ -1851,6 +1967,8 @@ On storefront traffic, this almost always means `CONSTRUCTOR_BACKEND_TOKEN` is m
 - `InvalidCatalogDataException` when saving models: the searchable array has no `name`. Add one, or implement `toConstructorItem()`.
 - Results don't match your database rows: the item IDs in Constructor must equal the models' Scout keys. Re-import after changing `getScoutKey()`.
 - `scout:index` throws: create indexes in the Constructor dashboard instead.
+- Every search returns nothing with soft deletes enabled: configure `__soft_deleted` as a hidden facet in Constructor, then re-import so every item has it.
+- Fields set by another feed disappear after a model save: switch to `CONSTRUCTOR_SCOUT_SYNC_MODE=patch`.
 
 ### Performance
 

@@ -17,6 +17,13 @@ A full review against Constructor's API reference and backend-integration docume
 - Every dynamic path segment is URL-encoded, so caller input can't change the endpoint or add query parameters on authenticated requests.
 - Logs no longer contain request parameters, shopper identifiers or response headers.
 - Beacon cookies are read from the request, not `$_COOKIE`, so they can't leak between requests on Octane.
+- `origin_referrer` no longer includes the page's query string (reset tokens, emails).
+- Forwarded User-Agent and identity values are sanitized; a malformed header no longer turns a search into an error page.
+- Exception messages and logs no longer include Constructor's response body; URL parameters are `#[\SensitiveParameter]`; tokens are masked in dumps.
+- Endpoint `parameters` can no longer override `key`, `c`, `i`, `s` or `ui`.
+- Consent applies to explicit `client_id` values; new `identity.require_consent` for opt-in consent.
+- API hosts must use https. The generated client ID cookie is `Secure` on https.
+- `.`/`..` path segments are fully encoded.
 
 ### Added
 - `Constructor` entry class: `Constructor::agent()`, `Constructor::catalog()`, `Constructor::recommendations()`, `Constructor::searchService()`.
@@ -29,9 +36,12 @@ A full review against Constructor's API reference and backend-integration docume
 - `Scout\ConstructorSearchable` interface for Scout models.
 - Typed exceptions under `ConstructorIO\Laravel\Exceptions`.
 - `throw_exceptions`, `log_channel`, `default_section`, `identity.*`, `stream_timeout`, `catalog.*` and `scout.batch_size` settings.
+- Sponsored Listings support: `is_sponsored`, `sponsored_campaign_id`, `sponsored_campaign_owner` on products.
+- `SearchResults::trackingData()` for the beacon's `cnstrc-data` script tag; `resultId` on `AutocompleteResults`; `relatedBrowsePages`; `variation_slice`; collection `active_overriding_collection`; task `indexed`.
+- `catalog.batch_size`, `scout.sync_mode` (replace or patch), `identity.require_consent`.
 - Test suite (PHPUnit + Testbench), Pint, Larastan and GitHub Actions CI.
 - `AGENTS.md`, `CLAUDE.md`, the Constructor docs MCP server, Claude Code skills, a review subagent, CONTRIBUTING and SECURITY.
-- Laravel 13 and Scout 11 support.
+- Laravel 13 support. The Scout engine requires Scout 11.
 
 ### Changed
 - Package renamed to `debello-io/constructor-laravel`.
@@ -54,6 +64,12 @@ A full review against Constructor's API reference and backend-integration docume
 - Task polling never finished for `CANCELED` tasks.
 - Scout paginated results always returned page 1, and 429s triggered unbounded recursion.
 - `getFirstProductImageFromCollection()` always returned null.
+- 1.x class names failed as type-hints and in `instanceof` checks until autoloaded.
+- Scout: soft-deleted models made every search return nothing; `whereIn()` with an empty list matched everything; `take()` and paginator totals were capped at 200; an item ID of `"0"` was dropped.
+- Shopping Agent streams that were cut off counted as successful, and `stream_timeout` didn't bound the total duration.
+- `getAvailableFacets()` stopped at 20 facets; `browseItems()` sent more IDs than Constructor accepts; pagination with `offset` reported the wrong page.
+- Malformed entries in API responses no longer crash the page.
+- Task polling now makes its last check at the deadline, and handles a missing status.
 
 ### Removed
 - PHP 8.1 and Laravel 10 support.

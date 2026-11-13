@@ -2,12 +2,20 @@
 
 namespace ConstructorIO\Laravel\Tests;
 
+use ConstructorIO\Laravel\Constructor;
 use ConstructorIO\Laravel\ConstructorServiceProvider;
+use ConstructorIO\Laravel\Http\ApiClient;
+use ConstructorIO\Laravel\Services\AgentService;
+use ConstructorIO\Laravel\Services\CatalogService;
+use ConstructorIO\Laravel\Services\RecommendationService;
+use ConstructorIO\Laravel\Services\SearchService;
+use ConstructorIO\Laravel\Support\ConstructorConfig;
 use ConstructorIO\Laravel\Support\RequestContext;
 use Illuminate\Http\Client\Request as HttpRequest;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Route;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 use Orchestra\Testbench\TestCase as Orchestra;
 
 /**
@@ -27,6 +35,7 @@ abstract class TestCase extends Orchestra
     {
         RequestContext::resolveUserIdUsing(null);
         RequestContext::resolveConsentUsing(null);
+        ApiClient::flushState();
 
         parent::tearDown();
     }
@@ -47,11 +56,38 @@ abstract class TestCase extends Orchestra
     }
 
     /**
+     * Change package config after boot. Every package singleton is rebuilt on
+     * next use, so the new values apply even if a service was resolved already.
+     *
+     * @param  array<string, mixed>  $values  e.g. ['constructor.throw_exceptions' => true]
+     */
+    protected function reconfigure(array $values): void
+    {
+        foreach ($values as $key => $value) {
+            $this->app['config']->set($key, $value);
+        }
+
+        foreach ([
+            ConstructorConfig::class,
+            RequestContext::class,
+            ApiClient::class,
+            SearchService::class,
+            RecommendationService::class,
+            AgentService::class,
+            CatalogService::class,
+            Constructor::class,
+        ] as $singleton) {
+            $this->app->forgetInstance($singleton);
+        }
+    }
+
+    /**
      * Make the container's current request look like a shopper's browser request.
      *
      * @param  array<string, string>  $cookies  Raw (unencrypted) cookies, e.g. the beacon's.
+     * @param  array<string, string>  $server  Extra $_SERVER values (headers as HTTP_*).
      */
-    protected function actAsShopperRequest(array $cookies = [], array $server = []): Request
+    protected function actAsShopperRequest(array $cookies = [], array $server = [], string $url = 'https://store.test/search?q=grill'): Request
     {
         $cookieHeader = implode('; ', array_map(
             fn (string $name, string $value) => "{$name}={$value}",
@@ -59,7 +95,7 @@ abstract class TestCase extends Orchestra
             $cookies,
         ));
 
-        $request = Request::create('https://store.test/search?q=grill', 'GET', server: array_merge([
+        $request = Request::create($url, 'GET', server: array_merge([
             'REMOTE_ADDR' => '203.0.113.42',
             'HTTP_USER_AGENT' => 'Mozilla/5.0 (Shopper Browser)',
             'HTTP_REFERER' => 'https://store.test/',
@@ -92,6 +128,16 @@ abstract class TestCase extends Orchestra
         }
 
         return $parameters;
+    }
+
+    /**
+     * Spy on the log. The package logs through Log::channel(), so the channel
+     * call returns the same spy.
+     */
+    protected function spyOnLog(): void
+    {
+        Log::spy();
+        Log::shouldReceive('channel')->andReturnSelf();
     }
 
     protected function pathOf(HttpRequest $request): string

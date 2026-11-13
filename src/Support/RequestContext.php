@@ -38,6 +38,9 @@ class RequestContext
     /** How long a generated client ID cookie lives, in minutes (one year). */
     private const CLIENT_ID_COOKIE_LIFETIME = 60 * 24 * 365;
 
+    /** Forwarded values longer than this are cut, so a hostile header can't bloat requests. */
+    private const MAX_FORWARDED_LENGTH = 512;
+
     /** Request attribute used to remember a generated client ID for the rest of the request. */
     private const GENERATED_CLIENT_ID_ATTRIBUTE = 'constructor.generated_client_id';
 
@@ -97,19 +100,26 @@ class RequestContext
      * Values in $overrides win. Use them when the identifiers don't come from
      * this HTTP request, e.g. a mobile app that sends its SDK's client and
      * session IDs to your API: ['client_id' => ..., 'session_id' => ..., 'user_id' => ...].
+     * Consent still applies to an overridden client_id.
      *
      * @param  array<string, mixed>  $overrides
      * @return array<string, string|int>
      */
     public function queryParameters(array $overrides = []): array
     {
+        $clientId = isset($overrides['client_id'])
+            ? ($this->hasConsent($this->request()) ? $this->sanitize($overrides['client_id']) : null)
+            : $this->clientId();
+
         $parameters = [
             'c' => $this->config->clientIdentifier,
-            'i' => $overrides['client_id'] ?? $this->clientId(),
+            'i' => $clientId,
             's' => $this->normalizeSessionNumber($overrides['session_id'] ?? null) ?? $this->sessionNumber(),
-            'ui' => isset($overrides['user_id']) ? (string) $overrides['user_id'] : $this->userId(),
+            'ui' => isset($overrides['user_id']) ? $this->sanitize($overrides['user_id']) : $this->userId(),
             '_dt' => (int) floor(microtime(true) * 1000),
-            'origin_referrer' => $overrides['origin_referrer'] ?? $this->referrer(),
+            'origin_referrer' => isset($overrides['origin_referrer'])
+                ? $this->withoutQueryString((string) $overrides['origin_referrer'])
+                : $this->referrer(),
         ];
 
         return array_filter($parameters, fn ($value) => $value !== null && $value !== '');
@@ -147,7 +157,7 @@ class RequestContext
             return null;
         }
 
-        $fromCookie = $this->readBeaconCookie(self::CLIENT_ID_COOKIE);
+        $fromCookie = $this->sanitize($this->readBeaconCookie(self::CLIENT_ID_COOKIE));
         if ($fromCookie !== null) {
             return $fromCookie;
         }
@@ -184,7 +194,7 @@ class RequestContext
         if (self::$userIdResolver !== null) {
             $userId = (self::$userIdResolver)($request);
 
-            return $userId === null ? null : (string) $userId;
+            return $this->sanitize($userId);
         }
 
         if (! $this->config->sendUserId || ! $this->container->bound('auth')) {
@@ -198,7 +208,7 @@ class RequestContext
             return null;
         }
 
-        return $userId === null ? null : (string) $userId;
+        return $this->sanitize($userId);
     }
 
     /**
@@ -218,16 +228,21 @@ class RequestContext
      */
     public function userAgent(): ?string
     {
-        return $this->request()?->userAgent();
+        // Control characters would make the HTTP client reject the header
+        // and turn a search into an error page, so they are removed.
+        return $this->sanitize($this->request()?->userAgent());
     }
 
     /**
-     * The page the shopper is on (`origin_referrer`).
+     * The page the shopper is on (`origin_referrer`), without its query string.
      *
      * Constructor wants the URL of the page that triggered the request. For a
      * server-rendered page that is the current URL. For an AJAX or fetch call
      * (e.g. autocomplete as the shopper types) it is the page that made the
      * call, which the browser sends as the Referer header.
+     *
+     * The query string is dropped: it can hold password-reset tokens, signed
+     * URL signatures or email addresses that must not be sent to a third party.
      */
     public function referrer(): ?string
     {
@@ -238,10 +253,12 @@ class RequestContext
         }
 
         if ($request->ajax() || $request->expectsJson() || $request->prefetch()) {
-            return $request->headers->get('referer');
+            $referer = $request->headers->get('referer');
+
+            return $referer === null ? null : $this->withoutQueryString($referer);
         }
 
-        return $request->fullUrl();
+        return $request->url();
     }
 
     /**
@@ -318,6 +335,7 @@ class RequestContext
                 name: self::CLIENT_ID_COOKIE,
                 value: $clientId,
                 minutes: self::CLIENT_ID_COOKIE_LIFETIME,
+                secure: $request->isSecure(),
                 httpOnly: false,
                 sameSite: 'lax',
             ));
@@ -326,9 +344,36 @@ class RequestContext
         return $clientId;
     }
 
+    /**
+     * Without a resolver, consent is assumed unless identity.require_consent is on.
+     */
     private function hasConsent(?Request $request): bool
     {
-        return self::$consentResolver === null || (bool) (self::$consentResolver)($request);
+        if (self::$consentResolver === null) {
+            return ! $this->config->requireConsent;
+        }
+
+        return (bool) (self::$consentResolver)($request);
+    }
+
+    /**
+     * Make a forwarded value safe to put in a header or query string: drop
+     * control characters, trim, cap the length. Empty becomes null.
+     */
+    private function sanitize(mixed $value): ?string
+    {
+        if ($value === null || ! is_scalar($value)) {
+            return null;
+        }
+
+        $clean = trim((string) preg_replace('/[\x00-\x1F\x7F]/', '', (string) $value));
+
+        return $clean === '' ? null : mb_substr($clean, 0, self::MAX_FORWARDED_LENGTH);
+    }
+
+    private function withoutQueryString(string $url): string
+    {
+        return strtok($url, '?#') ?: $url;
     }
 
     /**

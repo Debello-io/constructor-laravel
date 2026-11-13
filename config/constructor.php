@@ -108,8 +108,12 @@ return [
     |                     `ui`. Use Constructor::resolveUserIdUsing() to send a
     |                     different or hashed identifier instead.
     |
-    | Consent: register Constructor::resolveConsentUsing() to omit `i` for
-    | shoppers who have not consented to personalization.
+    | require_consent     Treat shoppers as NOT consenting until you register
+    |                     Constructor::resolveConsentUsing(). Without consent,
+    |                     `i` is omitted and no client ID cookie is set. Turn
+    |                     this on for sites that need opt-in consent (e.g. GDPR).
+    |                     `ui`, `s`, IP and user agent are still sent; Constructor's
+    |                     documentation only requires omitting `i`.
     |
     | @see https://docs.constructor.com/docs/integrating-with-constructor-retrieving-results-integration-approaches-backend-integration-options
     |
@@ -118,6 +122,7 @@ return [
     'identity' => [
         'generate_client_id' => env('CONSTRUCTOR_GENERATE_CLIENT_ID', true),
         'send_user_id' => env('CONSTRUCTOR_SEND_USER_ID', true),
+        'require_consent' => env('CONSTRUCTOR_REQUIRE_CONSENT', false),
     ],
 
     /*
@@ -127,9 +132,13 @@ return [
     |
     | timeout         Seconds to wait for a normal API response.
     | stream_timeout  Seconds to allow a streaming AI agent response to run.
-    | retry_attempts  Total attempts for a request. Only connection failures,
-    |                 429 and 5xx responses are retried. 4xx errors are not.
-    | retry_delay     Milliseconds before the first retry. Doubles each time.
+    | retry_attempts  Total attempts for a request (1-5). Only connection
+    |                 failures, 429 and 5xx responses are retried, and only for
+    |                 reads. 4xx errors and catalog writes are never retried.
+    | retry_delay     Milliseconds before the first retry. Doubles each time,
+    |                 or follows Retry-After on a 429; never more than 5 seconds.
+    |
+    | The hosts below must use https: requests carry secret tokens.
     |
     */
 
@@ -176,11 +185,13 @@ return [
     | AI Shopping Agent & Product Insights Agent
     |--------------------------------------------------------------------------
     |
-    | agent_domain   The agent domain configured for your index (required for
-    |                the Shopping Agent).
-    | guard          Ask Constructor to screen agent conversations for
-    |                harmful or off-topic content. The API default is off;
-    |                this package turns it on.
+    | domain                 The agent domain configured for your index
+    |                        (required for the Shopping Agent).
+    | guard                  Ask Constructor to screen agent conversations for
+    |                        harmful or off-topic content. The API default is
+    |                        off; this package turns it on.
+    | num_result_events      Maximum product batches in one Shopping Agent reply.
+    | num_results_per_event  Maximum products per batch.
     |
     | @see https://docs.constructor.com/reference/v1-asa-retrieve-intent
     |
@@ -202,6 +213,10 @@ return [
     | authenticate with `api_token`.
     |
     | notification_email  Constructor emails this address if an upload fails.
+    |                     Several addresses can be comma-separated.
+    | force               Process uploads even if they would remove a large
+    |                     share of the catalog (Constructor's safety check).
+    | batch_size          Items sent per /v2/items request (max 10,000).
     | upload_timeout      Seconds to allow a catalog file upload to take.
     | task_poll_interval  Seconds between task status checks.
     | task_timeout        Seconds to wait for a task before giving up.
@@ -213,6 +228,7 @@ return [
     'catalog' => [
         'notification_email' => env('CONSTRUCTOR_NOTIFICATION_EMAIL'),
         'force' => env('CONSTRUCTOR_FORCE_UPLOAD', false),
+        'batch_size' => env('CONSTRUCTOR_CATALOG_BATCH_SIZE', 1000),
         'upload_timeout' => env('CONSTRUCTOR_UPLOAD_TIMEOUT', 300),
         'task_poll_interval' => env('CONSTRUCTOR_TASK_POLL_INTERVAL', 10),
         'task_timeout' => env('CONSTRUCTOR_TASK_TIMEOUT', 600),
@@ -225,12 +241,18 @@ return [
     |
     | Settings for the "constructor" Scout engine (SCOUT_DRIVER=constructor).
     |
-    | batch_size  Items sent per /v2/items request when Scout syncs models.
+    | sync_mode  How a model save is sent to Constructor:
+    |              replace  PUT /v2/items: the item is replaced with exactly
+    |                       what the model sends.
+    |              patch    PATCH /v2/items: only the fields the model sends
+    |                       change; fields set by other feeds (inventory,
+    |                       merchandising data) are kept. Missing items are
+    |                       created.
     |
     */
 
     'scout' => [
-        'batch_size' => env('CONSTRUCTOR_SCOUT_BATCH_SIZE', 1000),
+        'sync_mode' => env('CONSTRUCTOR_SCOUT_SYNC_MODE', 'replace'),
     ],
 
 ];

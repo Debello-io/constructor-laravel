@@ -4,6 +4,7 @@ namespace ConstructorIO\Laravel\Tests\Feature;
 
 use ConstructorIO\Laravel\Exceptions\ApiException;
 use ConstructorIO\Laravel\Exceptions\ConfigurationException;
+use ConstructorIO\Laravel\Exceptions\InvalidArgumentException;
 use ConstructorIO\Laravel\Services\SearchService;
 use ConstructorIO\Laravel\Support\ConstructorConfig;
 use ConstructorIO\Laravel\Support\RequestContext;
@@ -172,7 +173,7 @@ class SearchServiceTest extends TestCase
         $collections = $this->service()->getCollections(['max_items' => 5]);
 
         $this->assertSame([['id' => 'summer-bbq', 'name' => 'Summer BBQ', 'description' => null, 'image' => 'https://img/summer.jpg',
-            'data' => ['image_url' => 'https://img/summer.jpg'], 'start_time' => null, 'end_time' => null]], $collections);
+            'data' => ['image_url' => 'https://img/summer.jpg'], 'start_time' => null, 'end_time' => null, 'active_overriding_collection' => null]], $collections);
         Http::assertSent(fn (Request $request) => ! $request->hasHeader('Authorization')
             && $this->queryOf($request)['num_results_per_page'] === ['5']);
     }
@@ -252,7 +253,7 @@ class SearchServiceTest extends TestCase
     {
         Http::fake();
 
-        $this->expectException(\InvalidArgumentException::class);
+        $this->expectException(InvalidArgumentException::class);
 
         $this->service()->browseItems(array_map(fn (int $i) => "SKU-{$i}", range(1, 101)));
     }
@@ -264,5 +265,84 @@ class SearchServiceTest extends TestCase
         $this->service()->autocomplete('grill', ['results_per_section' => ['Products' => 500]]);
 
         Http::assertSent(fn (Request $request) => $this->queryOf($request)['num_section_results_per_page[Products]'] === ['50']);
+    }
+
+    public function test_sponsored_listings_are_flagged_from_is_retail_media(): void
+    {
+        Http::fake(['ac.cnstrc.com/*' => Http::response(['response' => ['results' => [[
+            'value' => 'Sponsored Smoker',
+            'data' => ['id' => 'AD-1'],
+            'labels' => ['is_retail_media' => true, 'sl_campaign_id' => 'camp-1', 'sl_campaign_owner' => 'Acme Grills'],
+        ], ['value' => 'Organic Smoker', 'data' => ['id' => 'ORG-1']]]]])]);
+
+        $products = $this->service()->search('smoker')->products;
+
+        $this->assertTrue($products[0]['is_sponsored']);
+        $this->assertSame('camp-1', $products[0]['sponsored_campaign_id']);
+        $this->assertSame('Acme Grills', $products[0]['sponsored_campaign_owner']);
+        $this->assertFalse($products[1]['is_sponsored']);
+    }
+
+    public function test_available_facets_fetch_every_page_and_respect_hidden_facets(): void
+    {
+        Http::fake(['ac.cnstrc.com/*' => Http::response(['response' => ['facets' => [
+            ['name' => 'brand', 'display_name' => 'Brand', 'type' => 'multiple', 'hidden' => false],
+            ['name' => 'store_id', 'display_name' => 'Store', 'type' => 'single', 'hidden' => true],
+            ['name' => 'group_id', 'type' => 'hierarchical'],
+            ['display_name' => 'Malformed: no name'],
+            null,
+        ]]])]);
+
+        $visible = $this->service()->getAvailableFacets();
+        $withHidden = $this->service()->getAvailableFacets(['fmt_options' => ['show_hidden_facets' => true]]);
+
+        $this->assertSame([['name' => 'brand', 'display_name' => 'Brand', 'type' => 'checkbox_list']], $visible);
+        $this->assertSame(['brand', 'store_id'], array_column($withHidden, 'name'));
+        $this->assertSame('single_select', $withHidden[1]['type']);
+        Http::assertSent(fn (Request $request) => $this->queryOf($request)['num_results_per_page'] === ['1000']);
+    }
+
+    public function test_malformed_entries_in_responses_are_skipped(): void
+    {
+        Http::fake([
+            'ac.cnstrc.com/browse/collections*' => Http::response(['response' => ['collections' => [null, ['id' => 'summer']]]]),
+            'ac.cnstrc.com/*' => Http::response(['response' => [
+                'results' => [null, ['value' => 'Grill', 'data' => ['id' => 'G-1']]],
+                'facets' => [null, ['name' => 'brand', 'type' => 'multiple', 'options' => [null, ['value' => 'Weber', 'count' => 3]]]],
+                'groups' => [null],
+            ]]),
+        ]);
+
+        $results = $this->service()->search('grill');
+
+        $this->assertSame('G-1', $results->products[0]['id']);
+        $this->assertSame(['Weber' => 3], $results->facets['brand']['values']);
+        $this->assertSame('summer', $this->service()->getCollections()[0]['id']);
+    }
+
+    public function test_offset_reports_the_page_it_falls_on(): void
+    {
+        Http::fake(['ac.cnstrc.com/*' => Http::response(['response' => ['total_num_results' => 50, 'results' => []]])]);
+
+        $results = $this->service()->search('grill', [], ['offset' => 48, 'per_page' => 24]);
+
+        $this->assertSame(3, $results->page);
+        $this->assertFalse($results->hasMore());
+    }
+
+    public function test_autocomplete_exposes_result_id(): void
+    {
+        Http::fake(['ac.cnstrc.com/*' => Http::response(['result_id' => 'ac-9', 'sections' => []])]);
+
+        $this->assertSame('ac-9', $this->service()->autocomplete('web')->resultId);
+    }
+
+    public function test_zero_state_ignores_invalid_pod_params(): void
+    {
+        Http::fake(['ac.cnstrc.com/*' => Http::response(['response' => ['groups' => [], 'results' => []]])]);
+
+        $results = $this->service()->getZeroStateData(['recommendation_pod_id' => 'zs', 'recommendation_pod_params' => '"not an object"']);
+
+        $this->assertFalse($results->hasPopularProducts());
     }
 }

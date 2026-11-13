@@ -24,7 +24,7 @@ For a full walkthrough with complete controller and view examples, see the **[Us
 
 - PHP 8.2+
 - Laravel 11, 12 or 13 (Laravel 13 needs PHP 8.3+)
-- Optional: Laravel Scout 10.11+ or 11 for the Scout engine
+- Optional: Laravel Scout 11 for the Scout engine
 
 ## Installation
 
@@ -77,16 +77,39 @@ When your server calls Constructor on behalf of a shopper, Constructor still has
 Your part:
 
 1. **Load the Constructor beacon on every page.** It sets the cookies above and sends the behavioral events (clicks, add to cart, purchases) that Constructor learns from. This package does not send tracking events.
-2. **Pass `result_id` to the page.** Every result object has a `resultId`. Put it in `data-cnstrc-result-id` so the beacon's "results loaded" event is attributed:
+2. **Expose the tracking data on the page.** The beacon reads it from data attributes. On search and browse pages, also add the `cnstrc-data` script tag:
    ```blade
-   <div data-cnstrc-search data-cnstrc-result-id="{{ $results->resultId }}" data-cnstrc-num-results="{{ $results->total }}">
+   <div data-cnstrc-search
+        data-cnstrc-search-term="{{ $query }}"
+        data-cnstrc-section="Products"
+        data-cnstrc-result-id="{{ $results->resultId }}"
+        data-cnstrc-num-results="{{ $results->total }}"
+        data-cnstrc-result-page="{{ $results->page }}">
+       @foreach ($results->products as $product)
+           <div data-cnstrc-item-id="{{ $product['id'] }}"
+                data-cnstrc-item-name="{{ $product['name'] }}"
+                @if ($product['variation_id']) data-cnstrc-item-variation-id="{{ $product['variation_id'] }}" @endif
+                @if ($product['price']) data-cnstrc-item-price="{{ $product['price'] }}" @endif
+                @if ($product['is_sponsored'])
+                    data-cnstrc-sl-campaign-id="{{ $product['sponsored_campaign_id'] }}"
+                    data-cnstrc-sl-campaign-owner="{{ $product['sponsored_campaign_owner'] }}"
+                @endif>
+               ...
+               <button data-cnstrc-btn="add_to_cart">Add to cart</button>
+           </div>
+       @endforeach
+   </div>
+
+   <script id="cnstrc-data" type="application/json">@json($results->trackingData())</script>
    ```
+   Browse pages use `data-cnstrc-browse` with `data-cnstrc-filter-name` / `data-cnstrc-filter-value` instead of the search term. Recommendation widgets use `data-cnstrc-recommendations`. See [Data-driven event tracking](https://docs.constructor.com/docs/integrating-with-constructor-behavioral-tracking-data-driven-event-tracking) and the [User Guide](docs/USER_GUIDE.md#behavioral-tracking).
 3. **Configure [trusted proxies](https://laravel.com/docs/requests#configuring-trusted-proxies)** if you're behind a load balancer or CDN. Otherwise every request appears to come from the proxy's IP.
 4. **Respect consent.** If a shopper hasn't consented to personalization, the client ID must be omitted:
    ```php
    // AppServiceProvider::boot()
    Constructor::resolveConsentUsing(fn (?Request $request) => $request?->cookie('consent') === 'all');
    ```
+   For opt-in regimes (GDPR), also set `CONSTRUCTOR_REQUIRE_CONSENT=true` so nobody is identified until your resolver says so. Without consent the package omits `i`, as Constructor requires; `ui`, `s`, IP and user agent are still sent.
    If your consent banner sets that cookie from JavaScript, add it to `EncryptCookies::except([...])`. Otherwise Laravel can't decrypt it and `cookie()` returns `null`.
 5. **Anonymize `ui`** (recommended by Constructor). Use a keyed hash: a plain hash of a sequential ID is easy to reverse.
    ```php
@@ -130,10 +153,10 @@ if ($results->isRedirect()) {            // a redirect rule matched in the dashb
 foreach ($results->products as $product) {
     $product['name'];      $product['price'];   $product['image_url'];
     $product['url'];       $product['_raw'];    // every catalog field
-    $product['labels']['is_sponsored'] ?? false; // show an "Ad" badge
+    $product['is_sponsored'];                   // Sponsored Listing: show a "Sponsored" badge
 }
 
-$results->total;           // capped by Constructor at 10,000: check isTotalCapped()
+$results->total;           // Constructor serves at most 10,000 of them: totalPages() stops there
 $results->facets;          // ['brand' => ['name' => 'Brand', 'type' => 'checkbox_list', 'options' => [...], 'values' => [...]]]
 $results->sortOptions;     // sort options configured in the dashboard
 $results->resultId;        // pass to the page for tracking
@@ -202,16 +225,31 @@ $reply['thread_id'];             // pass back to continue the conversation
 $followUp = $agent->askShoppingAgent('Something electric instead', $reply['thread_id']);
 ```
 
-Stream the answer to the browser as it is generated:
+Stream the answer to the browser as it is generated. Forward only the events your UI needs: `complete` carries the raw response, including any hidden fields you requested.
 
 ```php
+use ConstructorIO\Laravel\Exceptions\ConstructorException;
+
 return response()->stream(function () use ($agent, $query) {
-    $agent->askShoppingAgentStreaming($query, function (string $event, array $data) {
+    $send = function (string $event, mixed $data) {
         echo "event: {$event}\ndata: ".json_encode($data)."\n\n";
         ob_flush(); flush();
-    });
-}, 200, ['Content-Type' => 'text/event-stream', 'X-Accel-Buffering' => 'no']);
+    };
+
+    try {
+        $agent->askShoppingAgentStreaming($query, function (string $event, mixed $data) use ($send) {
+            if (in_array($event, ['start', 'message', 'products', 'follow_up', 'end'], true)) {
+                $send($event, $data);
+            }
+        });
+    } catch (ConstructorException $e) {
+        report($e);
+        $send('error', ['message' => 'The assistant is unavailable. Please try again.']);
+    }
+}, 200, ['Content-Type' => 'text/event-stream', 'Cache-Control' => 'no-cache', 'X-Accel-Buffering' => 'no']);
 ```
+
+Agent text can be influenced by what shoppers type, so render it as text (`textContent`, not `innerHTML`) and only link to URLs on your own domain.
 
 ### Product Insights Agent
 
@@ -243,6 +281,7 @@ $catalog->uploadCatalog(storage_path('catalog/price-updates.jsonl'), 'patch', ['
 
 $status = $catalog->waitForTaskCompletion($upload['task_id']);   // throws TaskTimeoutException
 $status['successful'];   $status['warnings'];
+$status['indexed'];      // DONE can come before the change is searchable
 
 // Individual items (batched automatically, max 10,000 per request)
 $catalog->upsertItems([['id' => 'TRG-780', 'name' => 'Pro 780', 'data' => ['price' => 999]]]);
@@ -289,7 +328,11 @@ class Product extends Model implements ConstructorSearchable
 $products = Product::search('smoker')->where('brand', 'Traeger')->paginate(24);
 ```
 
-The item ID is the model's Scout key. Without `ConstructorSearchable`, `toSearchableArray()` is used: `name` stays at the top level and every other field moves into `data`. Scout searches go through the same storefront client, so they carry the shopper's identity too. Most retailers sync the catalog with file uploads and use Scout only for incremental updates.
+Requires Laravel Scout 11. The item ID is the model's Scout key. Without `ConstructorSearchable`, `toSearchableArray()` is used: `name` stays at the top level and every other field moves into `data`. Scout searches go through the same storefront client, so they carry the shopper's identity too.
+
+- `CONSTRUCTOR_SCOUT_SYNC_MODE=patch` sends model saves as partial updates, keeping fields other feeds maintain (inventory, merchandising data). The default, `replace`, replaces the whole item.
+- With `scout.soft_delete`, items carry `data.__soft_deleted` (`"0"`/`"1"`); configure `__soft_deleted` as a hidden facet in Constructor so Scout's filter works.
+- Most retailers sync the catalog with file uploads and use Scout only for incremental updates.
 
 ## Error handling
 
@@ -303,11 +346,12 @@ Every exception extends `ConstructorIO\Laravel\Exceptions\ConstructorException`:
 
 - `AuthenticationException`: 401 or 403
 - `RateLimitException`: 429. On storefront calls this usually means a missing `CONSTRUCTOR_BACKEND_TOKEN`.
-- `ApiException`: any other error status; see `getStatusCode()` and `getResponseBody()`
+- `ApiException`: any other error status; see `getStatusCode()` and `getResponseBody()`. Messages never include the response body, because it can echo search terms or filter values.
 - `ConnectionException`: Constructor could not be reached
 - `TaskTimeoutException`, `InvalidCatalogDataException`: catalog management
+- `InvalidArgumentException`: an argument Constructor would reject (e.g. more than 100 IDs for `browseItems()`), thrown before any request
 
-Only connection errors, 429 and 5xx responses are retried, with exponential backoff. Other 4xx responses are never retried. Logs never include tokens or shopper identifiers.
+Only reads are retried, and only after connection errors, 429 and 5xx responses, with exponential backoff that honours `Retry-After` (at most 5 seconds). Other 4xx responses, catalog writes and uploads are never retried. Logs and exception messages never include tokens, response bodies or shopper identifiers, and URL-holding parameters are hidden from stack traces.
 
 ## Testing your app
 
@@ -337,13 +381,15 @@ Every setting is documented in [`config/constructor.php`](config/constructor.php
 | `CONSTRUCTOR_SECTION` | `Products` | Default index section |
 | `CONSTRUCTOR_GENERATE_CLIENT_ID` | `true` | Create the beacon's client ID cookie on a first visit |
 | `CONSTRUCTOR_SEND_USER_ID` | `true` | Send `auth()->id()` as `ui` |
+| `CONSTRUCTOR_REQUIRE_CONSENT` | `false` | Withhold `i` until `resolveConsentUsing()` returns true |
 | `CONSTRUCTOR_AGENT_DOMAIN` | | AI Shopping Agent domain |
 | `CONSTRUCTOR_TIMEOUT` / `CONSTRUCTOR_STREAM_TIMEOUT` | `10` / `120` | Seconds |
-| `CONSTRUCTOR_RETRY_ATTEMPTS` / `CONSTRUCTOR_RETRY_DELAY` | `2` / `100` | Total attempts / first delay in ms |
+| `CONSTRUCTOR_RETRY_ATTEMPTS` / `CONSTRUCTOR_RETRY_DELAY` | `2` / `100` | Total attempts (max 5) / first delay in ms |
 | `CONSTRUCTOR_THROW_EXCEPTIONS` | `false` | Throw on storefront failures |
 | `CONSTRUCTOR_LOG_CHANNEL` | default | Where failures are logged |
 | `CONSTRUCTOR_NOTIFICATION_EMAIL` | | Catalog failure notifications |
-| `CONSTRUCTOR_SCOUT_BATCH_SIZE` | `1000` | Items per Scout sync request |
+| `CONSTRUCTOR_CATALOG_BATCH_SIZE` | `1000` | Items per `/v2/items` request (max 10,000) |
+| `CONSTRUCTOR_SCOUT_SYNC_MODE` | `replace` | `replace` or `patch` model saves |
 
 ## Upgrading from 1.x
 

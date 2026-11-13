@@ -9,6 +9,7 @@ Estimated effort: **under an hour** for most apps. The 1.x class names still wor
 ### 1. Requirements and package name
 
 - PHP **8.2+** and Laravel **11, 12 or 13**. Laravel 10 and PHP 8.1 are end-of-life and no longer supported.
+- The Scout engine needs **Laravel Scout 11**.
 - The package is now `debello-io/constructor-laravel`:
   ```bash
   composer remove timjohnbancroft/constructor-laravel
@@ -36,7 +37,8 @@ Re-publish the config: `php artisan vendor:publish --tag=constructor-config --fo
 | `retry_sleep` / `CONSTRUCTOR_RETRY_SLEEP` | `retry_delay` / `CONSTRUCTOR_RETRY_DELAY` (first delay, doubles per retry) |
 | `timeout` default 30 | default 10; new `stream_timeout` (120) for agent streams |
 | `client_identifier` default `cio-be-laravel-{app}` | default `cio-be-web-{app}`, the documented format |
-| | New: `default_section`, `identity.*`, `throw_exceptions`, `log_channel`, `catalog.*`, `scout.batch_size` |
+| `http://` API hosts accepted | `search_base_url` / `agent_base_url` must be `https://` (plain http only for localhost) |
+| | New: `default_section`, `identity.*` (incl. `require_consent`), `throw_exceptions`, `log_channel`, `catalog.*` (incl. `batch_size`), `scout.sync_mode` |
 
 ### 4. Renamed classes (deprecated aliases kept)
 
@@ -62,6 +64,9 @@ The old names are `class_alias`es and will be removed in 3.0. Constructor argume
 | No client ID on a first visit | A UUID is generated and set as the beacon's cookie | Documented first-visit behaviour |
 | | `Constructor::resolveConsentUsing()` and `Constructor::resolveUserIdUsing()` | Consent and anonymised user IDs |
 
+| Full page URL sent as `origin_referrer` | The URL **without its query string** | Query strings can hold reset tokens or emails |
+| | `identity.require_consent` for opt-in consent; consent also applies to an explicit `client_id` | GDPR-style consent |
+
 **Action:** remove any `'session_id' => session()->getId()` or `'user_id' => session()->getId()` options you pass.
 
 ### 6. Search, browse and autocomplete
@@ -72,11 +77,14 @@ The old names are `class_alias`es and will be removed in 3.0. Constructor argume
 - **Range facets** (price sliders) are now included in `$results->facets`, with `min`, `max` and `selected`. Each facet also has a full `options` list (`value`, `display_name`, `count`, `selected`, `data`). The 1.x `values` map is kept.
 - `group_id` values are encoded once. 1.x double-encoded them; if your category IDs really contain encoded characters, pass them already encoded.
 - `search('')` now returns no results. Use `browse()` for listing pages.
-- New on `SearchResults`: `resultId` (1.x always returned null here), `redirect` / `isRedirect()` / `redirectUrl()`, `sortOptions`, `refinedContent`, `relatedSearches`, `isTotalCapped()`. Each product gains `variation_id`, `variations`, `variations_map`, `matched_terms`, `is_slotted`, `labels` and `strategy`.
+- New on `SearchResults`: `resultId` (1.x always returned null here), `trackingData()` for the beacon's `cnstrc-data` script tag, `redirect` / `isRedirect()` / `redirectUrl()`, `sortOptions`, `refinedContent`, `relatedSearches`, `relatedBrowsePages`, `exceedsRetrievableLimit()`. Each product gains `variation_id`, `variations`, `variations_map`, `variation_slice`, `matched_terms`, `is_slotted`, `is_sponsored`, `sponsored_campaign_id`, `sponsored_campaign_owner`, `labels` and `strategy`.
+- `totalPages()` and `hasMore()` stop at the 10,000th result: Constructor serves no more than that for one query.
+- `AutocompleteResults` gains `resultId`. `metadata` on every DTO now includes Constructor's `request` object.
+- `browseItems()` accepts at most 100 IDs (Constructor's limit) and throws `InvalidArgumentException` beyond that.
 - Autocomplete uses the documented `num_section_results_per_page`. Use the `results_per_section` option for custom sections. `AutocompleteResults::$sections` exposes every section.
 - New: `browseItems(array $ids)`.
 - Collections now use the public browse endpoints, `/browse/collections` and `/browse/collection_id/{id}`, and never send your API token. `getCollection()` returns `null` for an unknown collection; 1.x invented a name from the ID.
-- `getAvailableFacets()` and `getFacetValuesWithImages()` use `/browse/facets` and `/browse/facet_options`. Option images come from the option's `image_url` data when set.
+- `getAvailableFacets(array $options = [])` uses `/browse/facets`, returns every facet (1.x stopped at the first page) and uses the mapped facet types (`checkbox_list`, `single_select`, `range`, `hierarchical`). `getFacetValuesWithImages()` uses `/browse/facet_options`; option images come from the option's `image_url` data when set.
 - `getRecipe()` looks the recipe up by ID. 1.x searched for the word "recipe" and filtered the first 100 results.
 - `per_page` is capped at 200, the documented maximum.
 
@@ -106,20 +114,26 @@ The old names are `class_alias`es and will be removed in 3.0. Constructor argume
 - `getCatalogInfo()` is removed; `GET /v1/catalog` doesn't exist. Use `listItems()`.
 - `uploadCatalog()` sends `format=jsonl` for `.jsonl` files. In 1.x, JSONL was processed as CSV. New options: `variations_file`, `notification_email`, `mode`, `patch_delta`, `on_missing`. The return value always has a `task_id` key, which is `null` when Constructor answers 202.
 - `waitForTaskCompletion($taskId, ?int $timeoutSeconds, ?int $pollIntervalSeconds)`: the 2nd and 3rd arguments were "max attempts" and "delay" in 1.x. It now treats `CANCELED` as finished and throws `TaskTimeoutException`.
-- `getTaskStatus()` adds `error` and `warnings`.
+- `getTaskStatus()` adds `error`, `warnings` and `indexed` (whether the search index includes the change yet).
+- Item writes are sent in batches of `catalog.batch_size` (`CONSTRUCTOR_CATALOG_BATCH_SIZE`).
 - New: `upsertItems()`, `patchItems()`, `deleteItems()`, `getItem()`, `listItems()`.
 
 ### 10. Scout
 
+- Requires Laravel Scout 11.
 - Items are sent in the documented shape, `{id, name, data: {...}}`. 1.x sent fields at the top level, which the API rejects, and swallowed the error. Implement `ConstructorSearchable::toConstructorItem()` for full control.
 - The item ID is always the Scout key. Override `getScoutKey()` to index by SKU.
 - `update()`, `delete()` and `flush()` now throw on failure, so queued syncs can retry. `flush()` processes the table in chunks.
-- `paginate()` respects the page and per-page values. Searches carry the shopper's identity and backend token.
+- `paginate()` respects the page and per-page values; `take()` above 200 is fetched in batches (up to 10,000). Searches carry the shopper's identity and backend token.
+- Soft deletes work: items carry `data.__soft_deleted` (`"0"`/`"1"`). Configure `__soft_deleted` as a hidden facet in Constructor.
+- `CONSTRUCTOR_SCOUT_SYNC_MODE=patch` sends saves as partial updates instead of full replacements.
 - The engine's 1.x extra methods (`autocomplete`, `browse`, `recommendations`, `getItem`) are removed. Use the facade or `CatalogService`.
 
 ### 11. Errors
 
 - Storefront reads still return empty results on failure by default. Set `CONSTRUCTOR_THROW_EXCEPTIONS=true` to throw.
 - Every exception extends `ConstructorException`. `AuthenticationException`, `RateLimitException` and `ApiException` carry the status code.
-- Only connection errors, 429 and 5xx are retried. 1.x also retried 4xx errors.
+- Only reads are retried, after connection errors, 429 and 5xx (honouring `Retry-After`, at most 5 s). 1.x also retried 4xx errors.
+- Exception messages no longer include Constructor's response body. Use `ApiException::getResponseBody()`.
+- Sponsored products: use `$product['is_sponsored']`. Constructor flags them with `labels.is_retail_media`, not `labels.is_sponsored`.
 - Browse requests are no longer logged at `info` level, and shopper identifiers are never logged.

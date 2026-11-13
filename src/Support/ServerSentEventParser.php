@@ -2,6 +2,8 @@
 
 namespace ConstructorIO\Laravel\Support;
 
+use ConstructorIO\Laravel\Exceptions\ConnectionException;
+
 /**
  * Incremental parser for a Server-Sent Events (SSE) stream.
  *
@@ -21,14 +23,27 @@ namespace ConstructorIO\Laravel\Support;
  *     }
  *     $last = $parser->flush();
  *
+ * A single event larger than MAX_EVENT_BYTES (1 MiB) throws a
+ * ConnectionException: no legitimate agent event is that big, and buffering
+ * without a limit would let one bad stream exhaust the worker's memory.
+ *
  * @see https://html.spec.whatwg.org/multipage/server-sent-events.html#parsing-an-event-stream
  */
 final class ServerSentEventParser
 {
-    /** Event name used when a block has data but no "event:" line. */
+    /** Event name used when a block has data but no (or an empty) "event:" line. */
     private const DEFAULT_EVENT = 'message';
 
+    /** Largest event (or unfinished event) the parser will hold in memory. */
+    public const MAX_EVENT_BYTES = 1024 * 1024;
+
+    /** UTF-8 byte order mark. The SSE spec says to ignore one at the start of the stream. */
+    private const BYTE_ORDER_MARK = "\xEF\xBB\xBF";
+
     private string $buffer = '';
+
+    /** Whether any bytes have been received yet (the BOM can only appear first). */
+    private bool $started = false;
 
     /** Raw bytes not yet line-normalised: a trailing "\r" may be half of "\r\n". */
     private string $pending = '';
@@ -37,10 +52,26 @@ final class ServerSentEventParser
      * Add a chunk and return the events it completed.
      *
      * @return list<array{event: string, data: mixed}>
+     *
+     * @throws ConnectionException If one event exceeds MAX_EVENT_BYTES.
      */
     public function feed(string $chunk): array
     {
         $raw = $this->pending.$chunk;
+
+        if (! $this->started && $raw !== '') {
+            // Wait until the first three bytes are here before deciding.
+            if (strlen($raw) < strlen(self::BYTE_ORDER_MARK) && str_starts_with(self::BYTE_ORDER_MARK, $raw)) {
+                $this->pending = $raw;
+
+                return [];
+            }
+
+            $this->started = true;
+            if (str_starts_with($raw, self::BYTE_ORDER_MARK)) {
+                $raw = substr($raw, strlen(self::BYTE_ORDER_MARK));
+            }
+        }
 
         // A chunk can end between the "\r" and "\n" of one line break. Hold a
         // trailing "\r" back until the next chunk, or it would be read as a
@@ -65,7 +96,24 @@ final class ServerSentEventParser
             }
         }
 
+        if (strlen($this->buffer) > self::MAX_EVENT_BYTES) {
+            $this->buffer = '';
+
+            throw new ConnectionException(sprintf(
+                'A Constructor agent stream event exceeded %d bytes; the stream was abandoned.',
+                self::MAX_EVENT_BYTES,
+            ));
+        }
+
         return $events;
+    }
+
+    /**
+     * True while part of an event has been received but not its end.
+     */
+    public function hasPartialEvent(): bool
+    {
+        return trim($this->buffer.$this->pending, "\n\r") !== '';
     }
 
     /**
@@ -107,7 +155,8 @@ final class ServerSentEventParser
             $value = str_starts_with($value, ' ') ? substr($value, 1) : $value;
 
             match ($field) {
-                'event' => $eventName = $value,
+                // A bare "event:" line resets to the default name, per the spec.
+                'event' => $eventName = $value === '' ? self::DEFAULT_EVENT : $value,
                 'data' => $dataLines[] = $value,
                 default => null, // "id" and "retry" are not used by Constructor.
             };

@@ -5,7 +5,9 @@ namespace ConstructorIO\Laravel\Services;
 use ConstructorIO\Laravel\Concerns\HandlesStorefrontFailures;
 use ConstructorIO\Laravel\DataTransferObjects\AutocompleteResults;
 use ConstructorIO\Laravel\DataTransferObjects\SearchResults;
+use ConstructorIO\Laravel\Exceptions\InvalidArgumentException;
 use ConstructorIO\Laravel\Http\ApiClient;
+use ConstructorIO\Laravel\Http\Path;
 use ConstructorIO\Laravel\Support\ConstructorConfig;
 use ConstructorIO\Laravel\Support\ParameterBuilder;
 use ConstructorIO\Laravel\Support\ResultTransformer;
@@ -32,6 +34,9 @@ class SearchService
 
     /** Constructor accepts at most this many IDs on /browse/items. */
     private const MAX_BROWSE_ITEM_IDS = 100;
+
+    /** Constructor's maximum page size for /browse/facets. */
+    private const MAX_FACETS_PER_REQUEST = 1000;
 
     /** Constructor allows 0-50 results per autocomplete section. */
     private const MAX_AUTOCOMPLETE_SECTION_RESULTS = 50;
@@ -66,7 +71,7 @@ class SearchService
             return SearchResults::empty(ParameterBuilder::page($options), ParameterBuilder::perPage($options));
         }
 
-        return $this->fetchResults('search', '/v1/search/'.rawurlencode($query), $filters, $options);
+        return $this->fetchResults('search', '/v1/search/'.Path::segment($query), $filters, $options);
     }
 
     /**
@@ -80,7 +85,7 @@ class SearchService
      */
     public function browse(string $filterName, string $filterValue, array $filters = [], array $options = []): SearchResults
     {
-        $path = '/browse/'.rawurlencode($filterName).'/'.rawurlencode($filterValue);
+        $path = '/browse/'.Path::segment($filterName).'/'.Path::segment($filterValue);
 
         return $this->fetchResults('browse', $path, $filters, $options);
     }
@@ -105,7 +110,7 @@ class SearchService
         }
 
         if (count($itemIds) > self::MAX_BROWSE_ITEM_IDS) {
-            throw new \InvalidArgumentException(sprintf(
+            throw new InvalidArgumentException(sprintf(
                 'browseItems() accepts at most %d item IDs per call (Constructor\'s limit); %d given.',
                 self::MAX_BROWSE_ITEM_IDS,
                 count($itemIds),
@@ -150,7 +155,7 @@ class SearchService
             $parameters['num_section_results_per_page'] = $this->autocompleteSectionLimits($options);
 
             $response = $this->api->getStorefront(
-                '/v1/autocomplete/'.rawurlencode($prefix),
+                '/v1/autocomplete/'.Path::segment($prefix),
                 $parameters,
                 ParameterBuilder::identity($options),
             );
@@ -189,7 +194,10 @@ class SearchService
             $podOptions = $options['recommendation_pod_params'] ?? [];
             if (is_string($podOptions)) {
                 // 1.x accepted a JSON string here.
-                $podOptions = json_decode($podOptions, true) ?: [];
+                $podOptions = json_decode($podOptions, true);
+            }
+            if (! is_array($podOptions)) {
+                $podOptions = [];
             }
 
             $popularProducts = $this->recommendations
@@ -221,18 +229,31 @@ class SearchService
     public function getAvailableFacets(array $options = []): array
     {
         return $this->attempt('getAvailableFacets', function () use ($options) {
-            $response = $this->api->getStorefront('/browse/facets', $this->sectionParameters($options));
+            $parameters = $this->sectionParameters($options) + [
+                // The endpoint pages its results (20 by default); ask for all of them.
+                'num_results_per_page' => self::MAX_FACETS_PER_REQUEST,
+            ];
+
+            $response = $this->api->getStorefront('/browse/facets', $parameters);
+            $showHidden = (bool) ($options['fmt_options']['show_hidden_facets'] ?? false);
 
             $facets = [];
             foreach ($response['response']['facets'] ?? [] as $facet) {
-                if (($facet['hidden'] ?? false) || in_array($facet['name'] ?? '', ['group_id', 'group_ids'], true)) {
-                    continue; // Categories are served by getBrowseGroups().
+                $name = is_array($facet) ? (string) ($facet['name'] ?? '') : '';
+
+                // Categories are served by getBrowseGroups().
+                if ($name === '' || in_array($name, ['group_id', 'group_ids'], true)) {
+                    continue;
+                }
+
+                if (($facet['hidden'] ?? false) && ! $showHidden) {
+                    continue;
                 }
 
                 $facets[] = [
-                    'name' => (string) $facet['name'],
-                    'display_name' => $facet['display_name'] ?? (string) $facet['name'],
-                    'type' => $facet['type'] ?? 'multiple',
+                    'name' => $name,
+                    'display_name' => $facet['display_name'] ?? $name,
+                    'type' => ResultTransformer::facetType((string) ($facet['type'] ?? 'multiple')),
                 ];
             }
 
@@ -295,7 +316,14 @@ class SearchService
             }
 
             $maxChildren = (int) ($options['max_children'] ?? 5);
-            $parameters['fmt_options'] = ['groups_max_depth' => (int) ($options['depth'] ?? ($maxChildren > 0 ? 2 : 1))];
+
+            // Depth to request: one level for the groups themselves, one more
+            // when we skip the "All" root, and one more for their children.
+            $defaultDepth = 1 + (isset($options['group_id']) ? 0 : 1) + ($maxChildren > 0 ? 1 : 0);
+            $parameters['fmt_options'] = array_merge(
+                $parameters['fmt_options'] ?? [],
+                ['groups_max_depth' => (int) ($options['depth'] ?? $defaultDepth)],
+            );
 
             $response = $this->api->getStorefront('/browse/groups', $parameters);
             $groups = $response['response']['groups'] ?? [];
@@ -334,15 +362,15 @@ class SearchService
 
             if (isset($options['sort_by'])) {
                 $parameters['sort_by'] = $options['sort_by'];
-                $parameters['sort_order'] = $options['sort_order'] ?? 'ascending';
+                $parameters['sort_order'] = $options['sort_order'] ?? 'descending';
             }
 
             $response = $this->api->getStorefront('/browse/collections', $parameters);
 
-            return array_map(
+            return array_values(array_map(
                 fn (array $collection) => $this->transformer->collection($collection),
-                $response['response']['collections'] ?? [],
-            );
+                array_filter($response['response']['collections'] ?? [], 'is_array'),
+            ));
         }, fn () => []);
     }
 
@@ -355,7 +383,7 @@ class SearchService
     {
         return $this->attempt('getCollection', function () use ($collectionId) {
             $response = $this->api->getStorefront(
-                '/browse/collection_id/'.rawurlencode($collectionId),
+                '/browse/collection_id/'.Path::segment($collectionId),
                 ['section' => $this->config->defaultSection, 'num_results_per_page' => 1],
             );
 
@@ -373,7 +401,7 @@ class SearchService
      */
     public function browseCollection(string $collectionId, array $filters = [], array $options = []): SearchResults
     {
-        return $this->fetchResults('browseCollection', '/browse/collection_id/'.rawurlencode($collectionId), $filters, $options);
+        return $this->fetchResults('browseCollection', '/browse/collection_id/'.Path::segment($collectionId), $filters, $options);
     }
 
     /**
@@ -427,8 +455,13 @@ class SearchService
      */
     protected function fetchResults(string $operation, string $path, array $filters, array $options): SearchResults
     {
-        $page = ParameterBuilder::page($options);
         $perPage = ParameterBuilder::perPage($options);
+
+        // With an offset, report the page that offset falls on so hasMore()
+        // and nextPageNumber() stay meaningful.
+        $page = isset($options['offset'])
+            ? intdiv(max(0, (int) $options['offset']), $perPage) + 1
+            : ParameterBuilder::page($options);
 
         return $this->attempt($operation, function () use ($path, $filters, $options, $page, $perPage) {
             $response = $this->api->getStorefront(
@@ -456,7 +489,7 @@ class SearchService
                 total: 0,
                 page: $page,
                 perPage: $perPage,
-                metadata: $this->metadata($response),
+                metadata: $this->transformer->metadata($response),
                 resultId: $resultId,
                 redirect: [
                     'url' => $body['redirect']['data']['url'] ?? null,
@@ -475,7 +508,7 @@ class SearchService
             page: $page,
             perPage: $perPage,
             facets: $this->transformer->facets($body['facets'] ?? []),
-            metadata: $this->metadata($response) + array_filter([
+            metadata: $this->transformer->metadata($response) + array_filter([
                 'collection' => $body['collection'] ?? null,
                 'features' => $body['features'] ?? null,
                 'result_sources' => $body['result_sources'] ?? null,
@@ -485,6 +518,7 @@ class SearchService
             sortOptions: $body['sort_options'] ?? [],
             refinedContent: $body['refined_content'] ?? [],
             relatedSearches: $body['related_searches'] ?? [],
+            relatedBrowsePages: $body['related_browse_pages'] ?? [],
         );
     }
 
@@ -500,7 +534,7 @@ class SearchService
             'term' => $suggestion['value'] ?? '',
             'matched_terms' => $suggestion['matched_terms'] ?? [],
             'data' => $suggestion['data'] ?? [],
-        ], $sections['Search Suggestions'] ?? []);
+        ], array_values(array_filter($sections['Search Suggestions'] ?? [], 'is_array')));
 
         $products = $this->transformer->products($sections[$this->config->defaultSection] ?? $sections['Products'] ?? []);
 
@@ -512,7 +546,7 @@ class SearchService
                     'name' => $category['value'] ?? '',
                     'path' => $category['data']['path'] ?? null,
                     'count' => $category['data']['count'] ?? null,
-                ], $sections[$sectionName]);
+                ], array_values(array_filter((array) $sections[$sectionName], 'is_array')));
                 break;
             }
         }
@@ -525,8 +559,11 @@ class SearchService
             suggestions: $suggestions,
             products: $products,
             categories: $categories,
-            metadata: $this->metadata($response),
+            metadata: $this->transformer->metadata($response) + [
+                'total_num_results_per_section' => $response['total_num_results_per_section'] ?? [],
+            ],
             sections: $sections,
+            resultId: $response['result_id'] ?? null,
         );
     }
 
@@ -581,20 +618,6 @@ class SearchService
         }
 
         return array_slice(array_values($categories), 0, $limit);
-    }
-
-    /**
-     * @param  array<string, mixed>  $response
-     * @return array<string, mixed>
-     */
-    private function metadata(array $response): array
-    {
-        return [
-            'request_id' => $response['request']['request_id'] ?? null,
-            'result_id' => $response['result_id'] ?? null,
-            // Search and browse nest experiments in `response`; autocomplete has them at the top level.
-            'experiments' => $response['response']['experiments'] ?? $response['experiments'] ?? [],
-        ];
     }
 
     /**

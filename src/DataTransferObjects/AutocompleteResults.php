@@ -25,7 +25,8 @@ class AutocompleteResults
      * @param  list<array<string, mixed>>  $suggestions  Search terms: ['term' => ..., 'matched_terms' => [...], 'data' => [...]].
      * @param  list<array<string, mixed>>  $products  Product previews (see ResultTransformer::product()).
      * @param  list<array<string, mixed>>  $categories  Category suggestions: ['id', 'name', 'path', 'count'].
-     * @param  list<array<string, mixed>>  $trending  Trending searches (zero state). Not populated by Constructor today.
+     * @param  list<array<string, mixed>>  $trending  Kept for 1.x compatibility; Constructor has no trending-searches
+     *                                                endpoint, so this package never fills it.
      * @param  list<array<string, mixed>>  $popularProducts  Products from a recommendation pod (zero state).
      * @param  list<array<string, mixed>>  $topCategories  Top-level categories (zero state).
      * @param  array<string, mixed>  $metadata  request_id and result_id. Pass result_id to the page for tracking.
@@ -41,6 +42,7 @@ class AutocompleteResults
         public readonly array $topCategories = [],
         public readonly array $metadata = [],
         public readonly array $sections = [],
+        public readonly ?string $resultId = null,
     ) {}
 
     public function hasSuggestions(): bool
@@ -98,6 +100,9 @@ class AutocompleteResults
     }
 
     /**
+     * Keys are camelCase for compatibility with 1.x front ends (unlike the
+     * other DTOs, which use snake_case).
+     *
      * @return array<string, mixed>
      */
     public function toArray(): array
@@ -111,6 +116,7 @@ class AutocompleteResults
             'topCategories' => $this->topCategories,
             'metadata' => $this->metadata,
             'sections' => $this->sections,
+            'result_id' => $this->resultId,
         ];
     }
 

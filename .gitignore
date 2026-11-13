@@ -26,7 +26,6 @@ phpunit.xml
 
 # Logs
 *.log
-.phpunit.cache
 
 # Claude Code personal settings
 .claude/settings.local.json

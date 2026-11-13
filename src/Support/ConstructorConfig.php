@@ -14,6 +14,12 @@ use Illuminate\Support\Str;
  */
 final class ConstructorConfig
 {
+    /** More attempts than this would keep a shopper's page waiting too long. */
+    private const MAX_RETRY_ATTEMPTS = 5;
+
+    /** Constructor's limit for one /v2/items write. */
+    private const MAX_ITEMS_PER_REQUEST = 10000;
+
     public function __construct(
         public readonly ?string $apiKey,
         public readonly ?string $apiToken,
@@ -24,6 +30,7 @@ final class ConstructorConfig
         public readonly string $defaultSection,
         public readonly bool $generateClientId,
         public readonly bool $sendUserId,
+        public readonly bool $requireConsent,
         public readonly int $timeout,
         public readonly int $streamTimeout,
         public readonly int $retryAttempts,
@@ -39,7 +46,8 @@ final class ConstructorConfig
         public readonly int $uploadTimeout,
         public readonly int $taskPollInterval,
         public readonly int $taskTimeout,
-        public readonly int $scoutBatchSize,
+        public readonly int $catalogBatchSize,
+        public readonly string $scoutSyncMode,
     ) {}
 
     /**
@@ -55,14 +63,15 @@ final class ConstructorConfig
             backendToken: self::stringOrNull($config['backend_token'] ?? null),
             clientIdentifier: self::stringOrNull($config['client_identifier'] ?? null)
                 ?? 'cio-be-web-'.(Str::slug($appName) ?: 'laravel'),
-            searchBaseUrl: rtrim((string) ($config['search_base_url'] ?? 'https://ac.cnstrc.com'), '/'),
-            agentBaseUrl: rtrim((string) ($config['agent_base_url'] ?? 'https://agent.cnstrc.com'), '/'),
+            searchBaseUrl: self::secureUrl('search_base_url', $config['search_base_url'] ?? 'https://ac.cnstrc.com'),
+            agentBaseUrl: self::secureUrl('agent_base_url', $config['agent_base_url'] ?? 'https://agent.cnstrc.com'),
             defaultSection: self::stringOrNull($config['default_section'] ?? null) ?? 'Products',
             generateClientId: (bool) ($config['identity']['generate_client_id'] ?? true),
             sendUserId: (bool) ($config['identity']['send_user_id'] ?? true),
+            requireConsent: (bool) ($config['identity']['require_consent'] ?? false),
             timeout: max(1, (int) ($config['timeout'] ?? 10)),
             streamTimeout: max(1, (int) ($config['stream_timeout'] ?? 120)),
-            retryAttempts: max(1, (int) ($config['retry_attempts'] ?? 2)),
+            retryAttempts: min(self::MAX_RETRY_ATTEMPTS, max(1, (int) ($config['retry_attempts'] ?? 2))),
             retryDelay: max(0, (int) ($config['retry_delay'] ?? 100)),
             throwExceptions: (bool) ($config['throw_exceptions'] ?? false),
             logChannel: self::stringOrNull($config['log_channel'] ?? null),
@@ -75,7 +84,11 @@ final class ConstructorConfig
             uploadTimeout: max(1, (int) ($config['catalog']['upload_timeout'] ?? 300)),
             taskPollInterval: max(1, (int) ($config['catalog']['task_poll_interval'] ?? 10)),
             taskTimeout: max(1, (int) ($config['catalog']['task_timeout'] ?? 600)),
-            scoutBatchSize: min(10000, max(1, (int) ($config['scout']['batch_size'] ?? 1000))),
+            // `scout.batch_size` was the 1.x/2.0-beta name; it applies to every item write.
+            catalogBatchSize: min(self::MAX_ITEMS_PER_REQUEST, max(1, (int) (
+                $config['catalog']['batch_size'] ?? $config['scout']['batch_size'] ?? 1000
+            ))),
+            scoutSyncMode: ($config['scout']['sync_mode'] ?? 'replace') === 'patch' ? 'patch' : 'replace',
         );
     }
 
@@ -113,6 +126,45 @@ final class ConstructorConfig
         return $this->agentDomain ?? throw new ConfigurationException(
             'CONSTRUCTOR_AGENT_DOMAIN is not set. The AI Shopping Agent requires the agent domain configured for your index.'
         );
+    }
+
+    /**
+     * Keep the secrets out of dd(), dump(), debug bars and error pages.
+     *
+     * @return array<string, mixed>
+     */
+    public function __debugInfo(): array
+    {
+        $properties = get_object_vars($this);
+
+        foreach (['apiToken', 'backendToken'] as $secret) {
+            if ($properties[$secret] !== null) {
+                $properties[$secret] = '********';
+            }
+        }
+
+        return $properties;
+    }
+
+    /**
+     * Requests carry secret tokens, so only https hosts are accepted
+     * (plain http is allowed for localhost, e.g. a local mock server).
+     *
+     * @throws ConfigurationException
+     */
+    private static function secureUrl(string $key, mixed $value): string
+    {
+        $url = rtrim((string) $value, '/');
+        $scheme = parse_url($url, PHP_URL_SCHEME);
+        $host = parse_url($url, PHP_URL_HOST);
+
+        $isLocal = in_array($host, ['localhost', '127.0.0.1', '::1'], true);
+
+        if ($scheme !== 'https' && ! ($scheme === 'http' && $isLocal)) {
+            throw new ConfigurationException("constructor.{$key} must be an https URL; got \"{$url}\".");
+        }
+
+        return $url;
     }
 
     /**

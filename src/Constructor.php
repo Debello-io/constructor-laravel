@@ -137,9 +137,12 @@ class Constructor implements SearchProvider
         return $this->search->getFacets($query, $filters);
     }
 
-    public function getAvailableFacets(): array
+    /**
+     * @param  array<string, mixed>  $options  section, fmt_options (e.g. show_hidden_facets)
+     */
+    public function getAvailableFacets(array $options = []): array
     {
-        return $this->search->getAvailableFacets();
+        return $this->search->getAvailableFacets($options);
     }
 
     public function getFacetValuesWithImages(string $facetName, int $maxItems = 10): array
@@ -182,9 +185,12 @@ class Constructor implements SearchProvider
         return $this->search->browseRecipes($filterName, $filterValue, $filters, $options);
     }
 
-    public function getRecipe(string $recipeId): ?array
+    /**
+     * @param  array<string, mixed>  $options  section (default "Recipes")
+     */
+    public function getRecipe(string $recipeId, array $options = []): ?array
     {
-        return $this->search->getRecipe($recipeId);
+        return $this->search->getRecipe($recipeId, $options);
     }
 
     /*

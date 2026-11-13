@@ -4,9 +4,13 @@ includes:
     - vendor/larastan/larastan/extension.neon
 
 parameters:
+    # Goal: level 8 (nullability and list/array precision). Raise it once the
+    # remaining level 7-8 findings in src are fixed.
     level: 6
     paths:
         - src
+        # tests/ is not analysed yet: it still has a dozen level-6 findings
+        # (untyped fixture arrays, Scout test models). Add it once they are fixed.
     # The 1.x alias stubs declare classes inside `if (false)` purely for IDEs.
     excludePaths:
         - src/Services/Search/ConstructorSandboxSearch.php

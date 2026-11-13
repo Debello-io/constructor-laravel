@@ -4,9 +4,11 @@ namespace ConstructorIO\Laravel\Services;
 
 use ConstructorIO\Laravel\Exceptions\ApiException;
 use ConstructorIO\Laravel\Exceptions\AuthenticationException;
+use ConstructorIO\Laravel\Exceptions\ConnectionException;
 use ConstructorIO\Laravel\Exceptions\InvalidCatalogDataException;
 use ConstructorIO\Laravel\Exceptions\TaskTimeoutException;
 use ConstructorIO\Laravel\Http\ApiClient;
+use ConstructorIO\Laravel\Http\Path;
 use ConstructorIO\Laravel\Support\ConstructorConfig;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Sleep;
@@ -63,7 +65,8 @@ class CatalogService
      *
      * @return bool True if the credentials work, false if Constructor rejects them (401/403).
      *
-     * @throws ApiException For any other error, e.g. Constructor being unreachable.
+     * @throws ApiException For any other error status.
+     * @throws ConnectionException If Constructor can't be reached.
      */
     public function verifyCredentials(): bool
     {
@@ -135,23 +138,16 @@ class CatalogService
 
         $url = $this->api->catalogUrl('/v1/catalog', $this->uploadParameters($method, $files, $options));
 
-        $handles = [];
+        $attachments = [];
 
         try {
-            // Uploads are sent once: a consumed file stream would be empty on a retry.
-            $request = $this->api->catalogRequest()
-                ->timeout($this->config->uploadTimeout)
-                ->retry(1);
-
             foreach ($files as $fieldName => $path) {
-                $handles[] = $handle = $this->openFile($path);
-                $request->attach($fieldName, $handle, basename($path));
+                $attachments[$fieldName] = [$this->openFile($path), basename($path)];
             }
 
-            // An (empty) multipart body option is what makes Laravel include the attached files.
-            $response = $this->api->send(fn () => $request->send($method, $url, ['multipart' => []]));
+            $response = $this->api->uploadToCatalog($method, $url, $attachments, $this->config->uploadTimeout);
         } finally {
-            foreach ($handles as $handle) {
+            foreach ($attachments as [$handle]) {
                 if (is_resource($handle)) {
                     fclose($handle);
                 }
@@ -170,7 +166,7 @@ class CatalogService
      *     ['id' => 'GRILL-123', 'name' => 'Pellet Grill', 'data' => ['price' => 899, 'url' => '/p/grill-123']]
      *     ['id' => 'GRILL-123', 'name' => 'Pellet Grill', 'price' => 899, 'url' => '/p/grill-123']
      *
-     * Large lists are split into batches (CONSTRUCTOR_SCOUT_BATCH_SIZE, at most 10,000).
+     * Large lists are split into batches (CONSTRUCTOR_CATALOG_BATCH_SIZE, at most 10,000).
      *
      * Options: force, notification_email.
      *
@@ -250,7 +246,7 @@ class CatalogService
     public function getItem(string $itemId, ?string $section = null): ?array
     {
         try {
-            return $this->api->catalog('GET', '/v2/items/'.rawurlencode($itemId), [
+            return $this->api->catalog('GET', '/v2/items/'.Path::segment($itemId), [
                 'section' => $section ?? $this->config->defaultSection,
             ]);
         } catch (ApiException $e) {
@@ -304,6 +300,9 @@ class CatalogService
      *   successful true only for DONE
      *   error      the failure details, if any
      *   warnings   ingestion warnings (e.g. a missing field), if any
+     *   indexed    whether the search index has been rebuilt with the change
+     *              (null if Constructor didn't say). A DONE task may not be
+     *              visible in search results until this is true.
      *
      * @return array<string, mixed>
      *
@@ -322,6 +321,7 @@ class CatalogService
             'successful' => $status === 'DONE',
             'error' => $response['error'] ?? null,
             'warnings' => $response['result']['ingestion_warnings'] ?? [],
+            'indexed' => isset($response['result']['index_built']) ? (bool) $response['result']['index_built'] : null,
         ]);
     }
 
@@ -354,23 +354,26 @@ class CatalogService
                 return $status;
             }
 
-            if (Carbon::now()->addSeconds($pollIntervalSeconds)->greaterThan($deadline)) {
-                throw new TaskTimeoutException(
-                    "Constructor task {$taskId} was still {$status['status']} after {$timeoutSeconds} seconds."
-                );
+            $secondsLeft = (int) ceil(Carbon::now()->diffInSeconds($deadline, absolute: false));
+
+            if ($secondsLeft <= 0) {
+                $state = $status['status'] ?? 'unknown';
+
+                throw new TaskTimeoutException("Constructor task {$taskId} was still {$state} after {$timeoutSeconds} seconds.");
             }
 
-            Sleep::for($pollIntervalSeconds)->seconds();
+            // Never sleep past the deadline, so the last check happens at the deadline.
+            Sleep::for(min($pollIntervalSeconds, $secondsLeft))->seconds();
         }
     }
 
     /**
-     * Items sent per /v2/items request (CONSTRUCTOR_SCOUT_BATCH_SIZE, capped
-     * at the API's limit of 10,000).
+     * Items sent per /v2/items request (CONSTRUCTOR_CATALOG_BATCH_SIZE,
+     * capped at the API's limit of 10,000).
      */
     public function batchSize(): int
     {
-        return min(self::MAX_ITEMS_PER_REQUEST, $this->config->scoutBatchSize);
+        return min(self::MAX_ITEMS_PER_REQUEST, $this->config->catalogBatchSize);
     }
 
     /**

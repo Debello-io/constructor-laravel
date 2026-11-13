@@ -5,6 +5,7 @@ namespace ConstructorIO\Laravel\Services;
 use ConstructorIO\Laravel\Concerns\HandlesStorefrontFailures;
 use ConstructorIO\Laravel\DataTransferObjects\RecommendationResults;
 use ConstructorIO\Laravel\Http\ApiClient;
+use ConstructorIO\Laravel\Http\Path;
 use ConstructorIO\Laravel\Support\ConstructorConfig;
 use ConstructorIO\Laravel\Support\ParameterBuilder;
 use ConstructorIO\Laravel\Support\ResultTransformer;
@@ -66,7 +67,7 @@ class RecommendationService
             );
 
             $response = $this->api->getStorefront(
-                '/recommendations/v1/pods/'.rawurlencode($podId),
+                '/recommendations/v1/pods/'.Path::segment($podId),
                 $parameters,
                 ParameterBuilder::identity($options),
             );
@@ -92,7 +93,7 @@ class RecommendationService
     protected function toRecommendationResults(string $podId, array $response): RecommendationResults
     {
         $body = $response['response'] ?? [];
-        $pod = $body['pod'] ?? [];
+        $pod = is_array($body['pod'] ?? null) ? $body['pod'] : [];
         $products = $this->transformer->products($body['results'] ?? []);
 
         return new RecommendationResults(
@@ -100,12 +101,7 @@ class RecommendationService
             title: (string) ($pod['display_name'] ?? ''),
             products: $products,
             total: (int) ($body['total_num_results'] ?? count($products)),
-            metadata: [
-                'request_id' => $response['request']['request_id'] ?? null,
-                'result_id' => $response['result_id'] ?? null,
-                'pod' => $pod,
-                'experiments' => $body['experiments'] ?? $response['experiments'] ?? [],
-            ],
+            metadata: $this->transformer->metadata($response) + ['pod' => $pod],
             resultId: $response['result_id'] ?? null,
         );
     }

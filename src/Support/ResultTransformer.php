@@ -30,6 +30,7 @@ class ResultTransformer
     {
         // Agent events sometimes send the data object without the wrapper.
         $data = isset($result['data']) && is_array($result['data']) ? $result['data'] : $result;
+        $labels = is_array($result['labels'] ?? null) ? $result['labels'] : [];
 
         return [
             'id' => isset($data['id']) ? (string) $data['id'] : null,
@@ -48,10 +49,17 @@ class ResultTransformer
             'matched_terms' => $result['matched_terms'] ?? [],
             'variations' => $result['variations'] ?? [],
             'variations_map' => $result['variations_map'] ?? null,
-            // True when merchandising rules placed this result. With
-            // labels.is_sponsored, it tells you when to show an "Ad" badge.
+            // True when a merchandising rule pinned this result in place.
             'is_slotted' => (bool) ($result['is_slotted'] ?? false),
-            'labels' => $result['labels'] ?? [],
+            // Sponsored Listings: show a "Sponsored" badge when true, and put
+            // the campaign ID and owner on the result element
+            // (data-cnstrc-sl-campaign-id / -owner) so the beacon attributes it.
+            // @see https://docs.constructor.com/docs/products-retail-media-learn-about-sponsored-listings-implement-sponsored-listings
+            'is_sponsored' => (bool) ($labels['is_retail_media'] ?? false),
+            'sponsored_campaign_id' => $labels['sl_campaign_id'] ?? null,
+            'sponsored_campaign_owner' => $labels['sl_campaign_owner'] ?? null,
+            'labels' => $labels,
+            'variation_slice' => $result['variation_slice'] ?? null,
             // Recommendations only: the strategy that picked this item.
             'strategy' => $result['strategy'] ?? null,
             '_raw' => $data,
@@ -87,14 +95,14 @@ class ResultTransformer
     {
         $formatted = [];
 
-        foreach ($facets as $facet) {
+        foreach (array_filter($facets, 'is_array') as $facet) {
             $name = $facet['name'] ?? null;
             if ($name === null || $name === '') {
                 continue;
             }
 
-            $type = $this->facetType($facet['type'] ?? 'multiple');
-            $options = array_map(fn (array $option) => $this->facetOption($option), $facet['options'] ?? []);
+            $type = self::facetType((string) ($facet['type'] ?? 'multiple'));
+            $options = $this->facetOptions($facet['options'] ?? []);
 
             if ($type !== 'range' && $options === []) {
                 continue;
@@ -130,8 +138,8 @@ class ResultTransformer
     {
         $formatted = [];
 
-        foreach ($groups as $group) {
-            $children = $group['children'] ?? [];
+        foreach (array_filter($groups, 'is_array') as $group) {
+            $children = is_array($group['children'] ?? null) ? $group['children'] : [];
             if ($maxChildren !== null) {
                 $children = array_slice($children, 0, $maxChildren);
             }
@@ -155,6 +163,29 @@ class ResultTransformer
     }
 
     /**
+     * Response details every result DTO carries in `metadata`.
+     *
+     * @param  array<string, mixed>  $response
+     *                                          `request` is Constructor's interpretation of the request. The beacon
+     *                                          needs it, with `result_id`, in the page's cnstrc-data script tag on
+     *                                          search and browse pages (see SearchResults::trackingData()).
+     * @return array{request: array<string, mixed>|null, request_id: string|null, result_id: string|null, experiments: list<array<string, mixed>>}
+     */
+    public function metadata(array $response): array
+    {
+        $request = is_array($response['request'] ?? null) ? $response['request'] : null;
+
+        return [
+            'request' => $request,
+            'request_id' => $request['request_id'] ?? null,
+            'result_id' => $response['result_id'] ?? null,
+            // Search, browse and recommendations nest experiments in
+            // `response`; autocomplete has them at the top level.
+            'experiments' => $response['response']['experiments'] ?? $response['experiments'] ?? [],
+        ];
+    }
+
+    /**
      * @param  array<string, mixed>  $collection
      * @return array<string, mixed>
      */
@@ -170,6 +201,8 @@ class ResultTransformer
             'data' => $data,
             'start_time' => $collection['start_time'] ?? null,
             'end_time' => $collection['end_time'] ?? null,
+            // Content scheduling: the collection currently shown in this one's place.
+            'active_overriding_collection' => $collection['active_overriding_collection'] ?? null,
         ];
     }
 
@@ -186,14 +219,26 @@ class ResultTransformer
             'selected' => ($option['status'] ?? '') === 'selected',
             'data' => $option['data'] ?? [],
             'range' => $option['range'] ?? null,
-            'options' => array_map(fn (array $child) => $this->facetOption($child), $option['options'] ?? []),
+            'options' => $this->facetOptions($option['options'] ?? []),
         ];
+    }
+
+    /**
+     * @return list<array<string, mixed>>
+     */
+    private function facetOptions(mixed $options): array
+    {
+        if (! is_array($options)) {
+            return [];
+        }
+
+        return array_values(array_map(fn (array $option) => $this->facetOption($option), array_filter($options, 'is_array')));
     }
 
     /**
      * Map Constructor's facet types to UI-friendly names.
      */
-    private function facetType(string $constructorType): string
+    public static function facetType(string $constructorType): string
     {
         return match ($constructorType) {
             'single' => 'single_select',

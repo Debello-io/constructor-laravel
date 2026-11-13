@@ -6,8 +6,10 @@ use ConstructorIO\Laravel\DataTransferObjects\SearchResults;
 use ConstructorIO\Laravel\Exceptions\ConstructorException;
 use ConstructorIO\Laravel\Services\CatalogService;
 use ConstructorIO\Laravel\Services\SearchService;
+use ConstructorIO\Laravel\Support\ConstructorConfig;
 use Illuminate\Database\Eloquent\Collection as EloquentCollection;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Database\Eloquent\SoftDeletingScope;
 use Illuminate\Support\Collection;
 use Illuminate\Support\LazyCollection;
@@ -33,6 +35,19 @@ use Laravel\Scout\Engines\Engine;
  * Constructor needs a search term: an empty query returns no results. Use
  * Constructor::browse() for category and listing pages.
  *
+ * Saving a model sends it according to CONSTRUCTOR_SCOUT_SYNC_MODE:
+ *   replace (default)  PUT /v2/items: the item becomes exactly what the model sends.
+ *   patch              PATCH /v2/items with on_missing=CREATE: only the fields the
+ *                      model sends change, so fields maintained by other feeds
+ *                      (inventory, merchandising data) are kept.
+ *
+ * Soft deletes (scout.soft_delete = true): each item gets
+ * data.__soft_deleted = "0" or "1", and searches filter on it the way Scout
+ * expects (withTrashed() / onlyTrashed()). Configure `__soft_deleted` as a
+ * hidden facet in the Constructor dashboard so it can be filtered on.
+ *
+ * Requires Laravel Scout 11 (where() with an operator).
+ *
  * @see ConstructorSearchable for how models are turned into Constructor items.
  */
 class ConstructorEngine extends Engine
@@ -40,14 +55,18 @@ class ConstructorEngine extends Engine
     /** Scout's default page size when neither take() nor paginate() sets one. */
     private const DEFAULT_PER_PAGE = 24;
 
+    /** Constructor returns at most this many results per request. */
+    private const MAX_PER_REQUEST = 200;
+
     public function __construct(
         protected readonly CatalogService $catalog,
         protected readonly SearchService $search,
+        protected readonly ConstructorConfig $config,
         protected readonly bool $softDelete = false,
     ) {}
 
     /**
-     * Create or replace the models' items in Constructor.
+     * Send the models' items to Constructor (replace or patch, see the class docblock).
      *
      * Failures throw, so a queued Scout job is retried instead of silently
      * leaving the index out of date.
@@ -56,6 +75,21 @@ class ConstructorEngine extends Engine
      */
     public function update($models): void
     {
+        if ($models->isEmpty()) {
+            return;
+        }
+
+        // Scout's built-in engines do this too: it sets the __soft_deleted
+        // metadata that toItem() copies into the item.
+        if ($this->softDelete && $this->usesSoftDelete($models->first())) {
+            foreach ($models as $model) {
+                // pushSoftDeleteMetadata() comes from Scout's Searchable trait.
+                if (method_exists($model, 'pushSoftDeleteMetadata')) {
+                    $model->pushSoftDeleteMetadata();
+                }
+            }
+        }
+
         $this->groupBySection($models)->each(function (Collection $sectionModels, string $section) {
             $items = $sectionModels
                 ->map(fn (Model $model) => $this->toItem($model))
@@ -63,7 +97,13 @@ class ConstructorEngine extends Engine
                 ->values()
                 ->all();
 
-            if ($items !== []) {
+            if ($items === []) {
+                return;
+            }
+
+            if ($this->config->scoutSyncMode === 'patch') {
+                $this->catalog->patchItems($items, $section, ['on_missing' => 'CREATE']);
+            } else {
                 $this->catalog->upsertItems($items, $section);
             }
         });
@@ -107,14 +147,15 @@ class ConstructorEngine extends Engine
     /**
      * Run the search and return Constructor's results.
      *
+     * take() above Constructor's 200-per-request limit is served by fetching
+     * consecutive pages (up to 10,000 results). Scout relies on this when it
+     * counts results for a paginator with a ->query() callback.
+     *
      * @param  Builder<Model>  $builder
      */
     public function search(Builder $builder): SearchResults
     {
-        return $this->performSearch($builder, [
-            'per_page' => $builder->limit ?? self::DEFAULT_PER_PAGE,
-            'page' => 1,
-        ]);
+        return $this->fetchWindow($builder, offset: 0, count: (int) ($builder->limit ?? self::DEFAULT_PER_PAGE));
     }
 
     /**
@@ -126,10 +167,10 @@ class ConstructorEngine extends Engine
      */
     public function paginate(Builder $builder, $perPage, $page): SearchResults
     {
-        return $this->performSearch($builder, [
-            'per_page' => (int) $perPage,
-            'page' => (int) $page,
-        ]);
+        $perPage = max(1, (int) $perPage);
+        $page = max(1, (int) $page);
+
+        return $this->fetchWindow($builder, offset: ($page - 1) * $perPage, count: $perPage);
     }
 
     /**
@@ -140,7 +181,11 @@ class ConstructorEngine extends Engine
      */
     public function mapIds($results): Collection
     {
-        return collect($results->products)->pluck('id')->filter()->values();
+        // Compare explicitly: "0" is a valid ID that filter() would drop.
+        return collect($results->products)
+            ->pluck('id')
+            ->filter(fn ($id) => $id !== null && $id !== '')
+            ->values();
     }
 
     /**
@@ -235,13 +280,79 @@ class ConstructorEngine extends Engine
     }
 
     /**
+     * Fetch `count` results starting at `offset`.
+     *
+     * One request when the window is a normal page; otherwise consecutive
+     * requests of up to 200 results, merged into one SearchResults.
+     *
+     * @param  Builder<Model>  $builder
+     */
+    protected function fetchWindow(Builder $builder, int $offset, int $count): SearchResults
+    {
+        $count = max(1, min($count, SearchResults::MAX_RETRIEVABLE_RESULTS - $offset));
+
+        if ($offset >= SearchResults::MAX_RETRIEVABLE_RESULTS) {
+            return SearchResults::empty();
+        }
+
+        // Fits in one request and lines up with a page boundary.
+        if ($count <= self::MAX_PER_REQUEST && $offset % $count === 0) {
+            return $this->performSearch($builder, ['per_page' => $count, 'page' => intdiv($offset, $count) + 1]);
+        }
+
+        // A custom callback decides the request itself, so it can't be paged here.
+        if ($builder->callback !== null) {
+            return $this->performSearch($builder, ['per_page' => min($count, self::MAX_PER_REQUEST), 'offset' => $offset]);
+        }
+
+        $first = null;
+        $products = [];
+
+        while (count($products) < $count) {
+            $batchSize = min(self::MAX_PER_REQUEST, $count - count($products));
+            $batch = $this->performSearch($builder, ['per_page' => $batchSize, 'offset' => $offset + count($products)]);
+
+            $first ??= $batch;
+            $products = array_merge($products, $batch->products);
+
+            // A short batch means there are no more results.
+            if (count($batch->products) < $batchSize) {
+                break;
+            }
+        }
+
+        return new SearchResults(
+            products: $products,
+            total: $first->total,
+            page: intdiv($offset, $count) + 1,
+            perPage: $count,
+            facets: $first->facets,
+            metadata: $first->metadata,
+            groups: $first->groups,
+            resultId: $first->resultId,
+            redirect: $first->redirect,
+            sortOptions: $first->sortOptions,
+            refinedContent: $first->refinedContent,
+            relatedSearches: $first->relatedSearches,
+            relatedBrowsePages: $first->relatedBrowsePages,
+        );
+    }
+
+    /**
      * Translate the Scout builder into a SearchService call.
      *
      * @param  Builder<Model>  $builder
-     * @param  array{per_page: int, page: int}  $paging
+     * @param  array<string, int>  $paging  per_page plus page or offset.
      */
     protected function performSearch(Builder $builder, array $paging): SearchResults
     {
+        // whereIn('field', []) can match nothing; sending no filter would match everything.
+        foreach ($builder->whereIns as $values) {
+            if ((array) $values === []) {
+                return SearchResults::empty();
+            }
+        }
+
         $query = trim((string) $builder->query);
         $derived = $this->rangeAndExclusionOptions($builder);
         $options = array_merge(
@@ -359,23 +470,18 @@ class ConstructorEngine extends Engine
     }
 
     /**
-     * Scout 10 stores wheres as [field => value]; Scout 11 as a list of
-     * ['field', 'operator', 'value']. Accept both.
+     * Scout 11 stores each where() as ['field' => ..., 'operator' => ..., 'value' => ...].
      *
      * @param  Builder<Model>  $builder
      * @return list<array{field: string, operator: string, value: mixed}>
      */
     protected function normalizedWheres(Builder $builder): array
     {
-        $wheres = [];
-
-        foreach ($builder->wheres as $key => $where) {
-            $wheres[] = is_array($where) && isset($where['field'])
-                ? ['field' => (string) $where['field'], 'operator' => (string) ($where['operator'] ?? '='), 'value' => $where['value'] ?? null]
-                : ['field' => (string) $key, 'operator' => '=', 'value' => $where];
-        }
-
-        return $wheres;
+        return array_values(array_map(fn (array $where) => [
+            'field' => (string) $where['field'],
+            'operator' => (string) ($where['operator'] ?? '='),
+            'value' => $where['value'] ?? null,
+        ], $builder->wheres));
     }
 
     /**
@@ -394,16 +500,25 @@ class ConstructorEngine extends Engine
             return null;
         }
 
-        // Scout's soft-delete flag lets ->withTrashed() / ->onlyTrashed()
-        // filter on `__soft_deleted` (configure it as a facet in Constructor).
-        if ($this->softDelete && method_exists($model, 'pushSoftDeleteMetadata')) {
-            $item['data'] = array_merge((array) ($item['data'] ?? []), $model->scoutMetadata());
+        // Set by pushSoftDeleteMetadata() in update(). Sent as "0" / "1":
+        // Constructor facet values are strings, and Scout filters with
+        // where('__soft_deleted', 0|1), which is sent as filters[__soft_deleted]=0|1.
+        $metadata = $model->scoutMetadata();
+        if (isset($metadata['__soft_deleted'])) {
+            $item['data'] = array_merge((array) ($item['data'] ?? []), [
+                '__soft_deleted' => (string) (int) $metadata['__soft_deleted'],
+            ]);
         }
 
         // The ID must be the Scout key so search results map back to rows.
         $item['id'] = $this->itemId($model);
 
         return $this->catalog->normalizeItem($item);
+    }
+
+    protected function usesSoftDelete(Model $model): bool
+    {
+        return in_array(SoftDeletes::class, class_uses_recursive($model), true);
     }
 
     protected function itemId(Model $model): string

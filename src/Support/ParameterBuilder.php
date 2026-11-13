@@ -26,9 +26,13 @@ namespace ConstructorIO\Laravel\Support;
  *
  * Shopper identity overrides (see RequestContext):
  *
- *   user_id     string  Signed-in user ID (`ui`)
- *   client_id   string  Anonymous client ID (`i`)
- *   session_id  int     Session number (`s`)
+ *   user_id          string  Signed-in user ID (`ui`)
+ *   client_id        string  Anonymous client ID (`i`). Omitted without consent.
+ *   session_id       int     Session number (`s`)
+ *   origin_referrer  string  Page URL the request is for (its query string is dropped)
+ *
+ * `parameters` can't replace `key` or the identity values: ApiClient always
+ * sets those last.
  */
 final class ParameterBuilder
 {
@@ -141,7 +145,13 @@ final class ParameterBuilder
         $parameter = [];
 
         foreach ($filters as $name => $values) {
-            $values = array_values(array_filter((array) $values, fn ($value) => $value !== null && $value !== ''));
+            // Only scalar values are valid filter values. Nested arrays (e.g.
+            // from unvalidated request input like filters[color][x]=1) are
+            // ignored instead of breaking the request.
+            $values = array_values(array_filter(
+                is_array($values) ? $values : [$values],
+                fn ($value) => is_scalar($value) && $value !== '',
+            ));
 
             if ($values !== []) {
                 $parameter[$name] = array_map(fn ($value) => self::filterValue($value), $values);

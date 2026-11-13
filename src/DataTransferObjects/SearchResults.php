@@ -17,18 +17,26 @@ namespace ConstructorIO\Laravel\DataTransferObjects;
  *
  *     echo "Page {$results->page} of {$results->totalPages()}";
  *
- * Pass $results->resultId to the page (data-cnstrc-result-id) so the beacon's
- * "results loaded" event can be attributed to this response.
+ * For behavioral tracking, put $results->resultId on the results container
+ * (data-cnstrc-result-id) and $results->trackingData() in a cnstrc-data
+ * script tag, so the beacon can attribute shoppers' actions to this response:
  *
+ *     <script id="cnstrc-data" type="application/json">@json($results->trackingData())</script>
+ *
+ * @see https://docs.constructor.com/docs/integrating-with-constructor-behavioral-tracking-data-driven-event-tracking
  * @see https://docs.constructor.com/reference/constructor-concepts-results-response-structure
  */
 class SearchResults
 {
     /**
-     * Constructor reports at most this many total results. Show "10,000+"
-     * when total reaches it.
+     * Constructor returns at most this many results for one query, however
+     * many match: page × per_page can't go past it. totalPages() and
+     * hasMore() respect the limit so pagination links never point at pages
+     * that can't be fetched.
+     *
+     * @see https://docs.constructor.com/docs/faq-general-what-are-constructors-throttling-thresholds-and-usage-limits
      */
-    public const MAX_REPORTED_TOTAL = 10000;
+    public const MAX_RETRIEVABLE_RESULTS = 10000;
 
     /**
      * @param  list<array<string, mixed>>  $products  Normalised products (see ResultTransformer::product()).
@@ -43,6 +51,7 @@ class SearchResults
      * @param  list<array<string, mixed>>  $sortOptions  Sort options configured in the dashboard.
      * @param  list<array<string, mixed>>  $refinedContent  Content rules (banners, messages) that matched.
      * @param  list<string>  $relatedSearches  Related search terms, when enabled.
+     * @param  list<array<string, mixed>>  $relatedBrowsePages  Related category/browse pages, when enabled.
      */
     public function __construct(
         public readonly array $products,
@@ -57,7 +66,22 @@ class SearchResults
         public readonly array $sortOptions = [],
         public readonly array $refinedContent = [],
         public readonly array $relatedSearches = [],
+        public readonly array $relatedBrowsePages = [],
     ) {}
+
+    /**
+     * The JSON the beacon expects in the cnstrc-data script tag on search
+     * and browse pages: Constructor's `request` object and the `result_id`.
+     *
+     * @return array{request: array<string, mixed>, result_id: string|null}
+     */
+    public function trackingData(): array
+    {
+        return [
+            'request' => $this->metadata['request'] ?? [],
+            'result_id' => $this->resultId,
+        ];
+    }
 
     /**
      * True when Constructor says to send the shopper to another URL instead
@@ -73,18 +97,24 @@ class SearchResults
         return $this->redirect['url'] ?? null;
     }
 
+    /**
+     * True if another page can be fetched.
+     */
     public function hasMore(): bool
     {
-        return ($this->page * $this->perPage) < $this->total;
+        return $this->page < $this->totalPages();
     }
 
+    /**
+     * Pages that can actually be fetched (see MAX_RETRIEVABLE_RESULTS).
+     */
     public function totalPages(): int
     {
         if ($this->perPage <= 0) {
             return 0;
         }
 
-        return (int) ceil($this->total / $this->perPage);
+        return (int) ceil(min($this->total, self::MAX_RETRIEVABLE_RESULTS) / $this->perPage);
     }
 
     public function isEmpty(): bool
@@ -117,11 +147,12 @@ class SearchResults
     }
 
     /**
-     * True when Constructor capped the total (see MAX_REPORTED_TOTAL).
+     * True when more results match than can be paged through (see
+     * MAX_RETRIEVABLE_RESULTS). Suggest a filter or a narrower query.
      */
-    public function isTotalCapped(): bool
+    public function exceedsRetrievableLimit(): bool
     {
-        return $this->total >= self::MAX_REPORTED_TOTAL;
+        return $this->total > self::MAX_RETRIEVABLE_RESULTS;
     }
 
     /**
@@ -142,6 +173,7 @@ class SearchResults
             'sort_options' => $this->sortOptions,
             'refined_content' => $this->refinedContent,
             'related_searches' => $this->relatedSearches,
+            'related_browse_pages' => $this->relatedBrowsePages,
         ];
     }
 

@@ -5,13 +5,18 @@ namespace ConstructorIO\Laravel\Tests\Feature;
 use ConstructorIO\Laravel\Exceptions\ApiException;
 use ConstructorIO\Laravel\Exceptions\AuthenticationException;
 use ConstructorIO\Laravel\Exceptions\ConfigurationException;
+use ConstructorIO\Laravel\Exceptions\ConnectionException;
 use ConstructorIO\Laravel\Exceptions\RateLimitException;
 use ConstructorIO\Laravel\Http\ApiClient;
 use ConstructorIO\Laravel\Services\AgentService;
 use ConstructorIO\Laravel\Support\ConstructorConfig;
 use ConstructorIO\Laravel\Support\RequestContext;
 use ConstructorIO\Laravel\Tests\TestCase;
+use GuzzleHttp\Promise\Create;
+use GuzzleHttp\Psr7\PumpStream;
+use GuzzleHttp\Psr7\Response as PsrResponse;
 use Illuminate\Http\Client\Request;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Http;
 
 class AgentServiceTest extends TestCase
@@ -316,5 +321,89 @@ class AgentServiceTest extends TestCase
         Http::fake(['agent.cnstrc.com/*' => Http::response('boom', 500)]);
 
         $this->assertSame(['questions' => [], '_raw' => []], $this->agent()->getProductQuestions('GRILL-1'));
+    }
+
+    public function test_a_stream_that_never_finishes_is_cut_off_at_the_stream_timeout(): void
+    {
+        $this->app['config']->set('constructor.stream_timeout', 30);
+        $this->app->forgetInstance(ConstructorConfig::class);
+        $this->app->forgetInstance(ApiClient::class);
+        $this->app->forgetInstance(AgentService::class);
+
+        // Each read returns a keep-alive and moves the clock forward 10 seconds,
+        // so the stream is alive but never completes.
+        $pings = new PumpStream(function () {
+            Carbon::setTestNow(Carbon::now()->addSeconds(10));
+
+            return ": keep-alive\nevent: ping\ndata: {}\n\n";
+        });
+
+        Http::fake(fn () => Create::promiseFor(new PsrResponse(200, ['Content-Type' => 'text/event-stream'], $pings)));
+
+        try {
+            $this->agent()->askShoppingAgent('A smoker for a small patio');
+            $this->fail('Expected ConnectionException');
+        } catch (ConnectionException $e) {
+            $this->assertStringContainsString('exceeded 30 seconds', $e->getMessage());
+        } finally {
+            Carbon::setTestNow();
+        }
+    }
+
+    public function test_a_stream_that_ends_without_an_end_event_throws(): void
+    {
+        $this->fakeIntentStream(
+            $this->sse([['start', ['thread_id' => 'th-1']], ['message', ['text' => 'Here are']]])
+            ."event: message\ndata: {\"text\":\"Hel"
+        );
+
+        $this->expectException(ConnectionException::class);
+        $this->expectExceptionMessage('ended before the response was complete');
+
+        $this->agent()->askShoppingAgent('Pellet grills');
+    }
+
+    public function test_product_question_stream_server_error_notifies_then_throws(): void
+    {
+        Http::fake([
+            'agent.cnstrc.com/v1/item_questions/*' => Http::response($this->sse([
+                ['start', ['qna_result_id' => 'qna-1']],
+                ['server_error', ['status_code' => 503, 'message' => 'Model unavailable']],
+            ]), 200, ['Content-Type' => 'text/event-stream']),
+        ]);
+
+        $events = [];
+
+        try {
+            $this->agent()->askProductQuestionStreaming('Is it rust proof?', 'GRILL-1', function (string $event, array $data) use (&$events) {
+                $events[] = [$event, $data];
+            });
+            $this->fail('Expected ApiException');
+        } catch (ApiException $e) {
+            $this->assertSame(503, $e->getStatusCode());
+        }
+
+        $this->assertSame(['error', ['status_code' => 503, 'message' => 'Model unavailable']], $events[1]);
+    }
+
+    public function test_the_client_identifier_cannot_be_overridden(): void
+    {
+        $this->fakeIntentStream($this->sse([['end', []]]));
+
+        $this->agent()->askShoppingAgent('Grill covers', null, [
+            'client' => 'cio-custom',
+            'parameters' => ['c' => 'cio-custom'],
+        ]);
+
+        Http::assertSent(fn (Request $request) => $this->queryOf($request)['c'] === ['cio-be-web-bbq-test-store']);
+    }
+
+    public function test_dot_only_queries_are_encoded_so_they_cannot_change_the_path(): void
+    {
+        $this->fakeIntentStream($this->sse([['end', []]]));
+
+        $this->agent()->askShoppingAgent('..');
+
+        Http::assertSent(fn (Request $request) => $this->pathOf($request) === '/v1/intent/%2E%2E');
     }
 }

@@ -2,6 +2,7 @@
 
 namespace ConstructorIO\Laravel\Tests\Unit;
 
+use ConstructorIO\Laravel\Exceptions\ConnectionException;
 use ConstructorIO\Laravel\Support\ServerSentEventParser;
 use PHPUnit\Framework\TestCase;
 
@@ -97,5 +98,52 @@ class ServerSentEventParserTest extends TestCase
             [['event' => 'search_result', 'data' => ['result_id' => 'r-1']]],
             $parser->feed("\ndata: {\"result_id\":\"r-1\"}\r\n\r\n"),
         );
+    }
+
+    public function test_a_leading_byte_order_mark_is_ignored(): void
+    {
+        $this->assertSame(
+            [['event' => 'start', 'data' => ['thread_id' => 't-1']]],
+            (new ServerSentEventParser)->feed("\xEF\xBB\xBFevent: start\ndata: {\"thread_id\":\"t-1\"}\n\n"),
+        );
+    }
+
+    public function test_a_byte_order_mark_split_across_chunks_is_ignored(): void
+    {
+        $parser = new ServerSentEventParser;
+
+        $this->assertSame([], $parser->feed("\xEF\xBB"));
+        $this->assertSame(
+            [['event' => 'start', 'data' => []]],
+            $parser->feed("\xBFevent: start\ndata: {}\n\n"),
+        );
+    }
+
+    public function test_a_bare_event_line_uses_the_default_name(): void
+    {
+        $this->assertSame(
+            [['event' => 'message', 'data' => ['text' => 'Hi']]],
+            (new ServerSentEventParser)->feed("event:\ndata: {\"text\":\"Hi\"}\n\n"),
+        );
+    }
+
+    public function test_an_oversized_event_is_rejected(): void
+    {
+        $parser = new ServerSentEventParser;
+
+        $this->expectException(ConnectionException::class);
+
+        $parser->feed('data: '.str_repeat('x', ServerSentEventParser::MAX_EVENT_BYTES + 1));
+    }
+
+    public function test_it_reports_a_partial_event(): void
+    {
+        $parser = new ServerSentEventParser;
+
+        $parser->feed("event: end\ndata: {}\n\n");
+        $this->assertFalse($parser->hasPartialEvent());
+
+        $parser->feed('event: message');
+        $this->assertTrue($parser->hasPartialEvent());
     }
 }

@@ -15,7 +15,8 @@ Supports PHP ^8.2 and Laravel 11, 12 and 13 (Laravel 13 needs PHP 8.3+).
 | `src/Constructor.php` | Entry point and facade target. Delegates to the services; implements `Contracts\SearchProvider`. |
 | `src/Facades/Constructor.php` | Facade. Keep its `@method` list in sync with `Constructor`. |
 | `src/ConstructorServiceProvider.php` | Bindings (singletons), config publishing, Scout driver, 1.x aliases, `EncryptCookies::except` for beacon cookies. |
-| `src/Http/ApiClient.php` | **The only place that sends HTTP.** Storefront vs catalog requests, retry policy, error → exception mapping. |
+| `src/Http/ApiClient.php` | **The only place that sends HTTP**, including SSE streams (`openStorefrontStream()`) and multipart uploads (`uploadToCatalog()`). Storefront vs catalog requests, retry policy, error → exception mapping. `send()`, `storefrontRequest()` and `catalogRequest()` are private. |
+| `src/Http/Path.php` | `Path::segment()`: encodes one dynamic path segment, including dot-only segments (`.`, `..`). Use it for **every** dynamic segment. |
 | `src/Http/QueryString.php` | Builds Constructor-style query strings (repeated keys, deepObject brackets, RFC 3986). |
 | `src/Support/ConstructorConfig.php` | Typed, validated view of `config/constructor.php`. Read config through this, not `config()`. |
 | `src/Support/RequestContext.php` | Shopper identity for backend integration: `i`, `s`, `ui`, `c`, `_dt`, `origin_referrer` and headers. |
@@ -26,9 +27,9 @@ Supports PHP ^8.2 and Laravel 11, 12 and 13 (Laravel 13 needs PHP 8.3+).
 | `src/Services/AgentService.php` | AI Shopping Agent (`/v1/intent`, SSE) and Product Insights Agent (`/v1/item_questions`). |
 | `src/Support/ServerSentEventParser.php` | Incremental SSE parser used by `AgentService`. |
 | `src/Services/CatalogService.php` | Catalog uploads, `/v2/items`, task polling. Uses the API token. |
-| `src/Scout/` | `ConstructorEngine` (Scout driver) and `SearchResultCollection`. |
+| `src/Scout/` | `ConstructorEngine` (Scout driver), `SearchResultCollection`, and the optional `ConstructorSearchable` model interface (`getConstructorSection()`, `toConstructorItem()`). |
 | `src/Concerns/HandlesStorefrontFailures.php` | Graceful-failure policy for storefront reads. |
-| `src/Exceptions/` | `ConstructorException` base, plus `ConfigurationException`, `ConnectionException`, `ApiException`, `AuthenticationException` (401/403), `RateLimitException` (429). |
+| `src/Exceptions/` | `ConstructorException` base, plus `ConfigurationException`, `ConnectionException`, `ApiException`, `AuthenticationException` (401/403), `RateLimitException` (429), `InvalidArgumentException` (bad caller input), `InvalidCatalogDataException`, `TaskTimeoutException`. |
 | `src/DataTransferObjects/` | `SearchResults`, `AutocompleteResults`, `RecommendationResults` (readonly). |
 | `src/Services/Search/ConstructorSandboxSearch.php`, `src/Services/ConstructorAgentService.php`, `src/Services/ConstructorService.php`, `src/Search/ConstructorEngine.php`, `src/Collections/`, `src/Contracts/SandboxSearchContract.php` | **Deprecated 1.x names**, `class_alias` stubs only. Never add code to them; remove in 3.0. |
 | `config/constructor.php` | All settings, each with a comment explaining it. |
@@ -54,32 +55,38 @@ Source: [Required parameters](https://docs.constructor.com/docs/integrating-with
 - Send `ui` only for signed-in users (`auth()->id()` or `Constructor::resolveUserIdUsing()`). Guests get no `ui`.
 - Without consent (`Constructor::resolveConsentUsing()` returns false), omit `i` and don't set the cookie.
 - `c` is `cio-be-web-{company}` (or `cio-be-mobile-{company}`). One value, from `ConstructorConfig::$clientIdentifier`.
-- Headers: forward the shopper's `User-Agent`, and their IP in `X-Forwarded-For` as a single address via `Request::ip()` (relies on TrustProxies).
+- Headers: forward the shopper's `User-Agent` (sanitized), and their IP in `X-Forwarded-For` as a single address via `Request::ip()` (relies on TrustProxies).
+- `origin_referrer` is the current page URL **without its query string** (for AJAX/fetch calls, the `Referer` without its query string). Query strings can hold reset tokens, signatures or emails.
+- Consent applies to explicit `client_id` overrides too. With `identity.require_consent=true`, shoppers count as not consenting until `resolveConsentUsing()` says otherwise.
+- Endpoint `parameters` can't override `key` or identity values: `ApiClient::storefrontUrl()` merges them last. Change identity only through the identity overrides.
 - `result_id` must reach the page (`data-cnstrc-result-id`) so beacon events are attributed. Keep it on every DTO.
 
 ## Request encoding rules
 
 - Build query strings with `QueryString::build()`. Lists repeat the key (`us=a&us=b`); maps use deepObject (`filters[color]=red&filters[color]=blue`). Never rely on `http_build_query` or Guzzle's `query` option.
-- `rawurlencode()` **every** dynamic path segment (queries, IDs, pod IDs, filter names and values). `1/2" grill grate #5` must stay one segment.
+- Encode **every** dynamic path segment (queries, IDs, pod IDs, filter names and values) with `Path::segment()`. `1/2" grill grate #5` must stay one segment, and `..` must not become a parent path.
 - Range filters are strings, `"min-max"` with `-inf` / `inf` for open ends. Boolean filter values are `True` / `False`.
 - Parameters the API documents as JSON strings (`pre_filter_expression`, `variations_map`) are JSON-encoded; everything else is not.
 
 ## Error handling policy
 
 - Storefront reads (search, browse, autocomplete, recommendations) log a warning and return an empty DTO. Set `throw_exceptions=true` to throw instead. Use `HandlesStorefrontFailures::attempt()`.
-- Agent and catalog calls always throw a `ConstructorException` subclass.
+- Agent and catalog calls throw a `ConstructorException` subclass, with three deliberate exceptions: `AgentService::getProductQuestions()` degrades like a storefront read, `CatalogService::verifyCredentials()` returns false on 401/403, and `CatalogService::getItem()` returns null on 404.
+- Exception messages never include response bodies, because they can echo search terms or filter values. The body is on `ApiException::getResponseBody()`.
 - `ConfigurationException` (missing key, token or domain) always throws.
-- Retries: only connection errors, 429 and 5xx, with bounded exponential backoff (`ApiClient::baseRequest()`). Never retry other 4xx errors. Never recurse to retry.
+- Retries: only connection errors, 429 and 5xx, and only for reads, with bounded exponential backoff that honours `Retry-After` (capped at 5 s; `ApiClient::baseRequest()`). Never retry other 4xx errors, catalog writes or uploads. Never recurse to retry.
 
 ## Coding conventions
 
 - Laravel Pint (`pint.json`, Laravel preset) and PHPStan via Larastan (`phpstan.neon.dist`) must pass.
 - Type everything: parameters, returns, properties. Use `readonly` where possible and `array<string, mixed>`-style docblock generics.
+- Mark parameters that hold URLs, tokens or shopper identifiers `#[\SensitiveParameter]` so they stay out of stack traces.
+- Sponsored products are flagged by Constructor as `labels.is_retail_media` (plus `sl_campaign_id` / `sl_campaign_owner`). `ResultTransformer` normalizes this to `is_sponsored` on each product. Don't check `labels.is_sponsored`: Constructor doesn't send it.
 - Comments explain **why**, especially Constructor quirks, and link the docs.constructor.com page that defines the behaviour. Don't narrate what the code obviously does.
 - Names say what things are (`SearchService`, `CatalogService`). No leftovers from demo apps ("Sandbox", fashion/outfit helpers).
 - No dead code, no commented-out code, no unused config keys.
 - Public API changes need: a facade `@method` update, a README section, a CHANGELOG entry, and an UPGRADE.md note if they break.
-- A new config key needs a comment in `config/constructor.php`, a line in `.env.example` and a README mention.
+- A new config key needs a comment in `config/constructor.php`, a property in `ConstructorConfig`, a line in `.env.example` and a README mention. Recent ones: `identity.require_consent`, `catalog.batch_size` (replaces `scout.batch_size`, which is still read as a fallback), `scout.sync_mode` (`replace` or `patch`). Base URLs must be https (http only for localhost).
 
 ## Verify against Constructor's docs first
 

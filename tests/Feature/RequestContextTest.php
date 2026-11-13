@@ -27,7 +27,7 @@ class RequestContextTest extends TestCase
         $this->assertSame('beacon-client-uuid', $parameters['i']);
         $this->assertSame(7, $parameters['s']);
         $this->assertSame('cio-be-web-bbq-test-store', $parameters['c']);
-        $this->assertSame('https://store.test/search?q=grill', $parameters['origin_referrer'], 'A page request sends its own URL');
+        $this->assertSame('https://store.test/search', $parameters['origin_referrer'], 'A page request sends its own URL, without the query string');
         $this->assertIsInt($parameters['_dt']);
         $this->assertArrayNotHasKey('ui', $parameters, 'Guests must not get a ui parameter');
     }

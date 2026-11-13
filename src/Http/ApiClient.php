@@ -15,10 +15,12 @@ use Illuminate\Http\Client\RequestException;
 use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
+use Psr\Http\Message\StreamInterface;
+use SensitiveParameter;
 use Throwable;
 
 /**
- * The one place this package talks HTTP to Constructor.
+ * The one place this package sends HTTP requests to Constructor.
  *
  * Constructor has two kinds of endpoint, and they are called differently:
  *
@@ -32,10 +34,16 @@ use Throwable;
  * Every response goes through throwIfFailed(), so callers get the same typed
  * exceptions whichever endpoint they use.
  *
+ * URLs built here contain shopper identifiers, so parameters that hold them
+ * are marked #[SensitiveParameter] to keep them out of stack traces.
+ *
  * @see https://docs.constructor.com/reference/main-authentication
  */
 class ApiClient
 {
+    /** Longest wait between retries, in milliseconds, whatever Retry-After says. */
+    private const MAX_RETRY_DELAY_MS = 5000;
+
     private static bool $warnedAboutBackendToken = false;
 
     public function __construct(
@@ -49,29 +57,60 @@ class ApiClient
         return $this->config;
     }
 
-    public function context(): RequestContext
-    {
-        return $this->context;
-    }
+    /*
+    |--------------------------------------------------------------------------
+    | Storefront endpoints
+    |--------------------------------------------------------------------------
+    */
 
     /**
-     * GET a storefront endpoint on the search host and return the decoded JSON.
+     * GET a storefront endpoint and return the decoded JSON.
      *
-     * @param  string  $path  Already-encoded path, e.g. '/v1/search/'.rawurlencode($query)
+     * @param  string  $path  Path with dynamic segments encoded by Path::segment().
      * @param  array<string, mixed>  $query  Endpoint parameters. Shopper identity is added for you.
-     * @param  array<string, mixed>  $identity  Overrides for client_id / session_id / user_id.
+     * @param  array<string, mixed>  $identity  Overrides for client_id / session_id / user_id / origin_referrer.
+     * @param  string|null  $baseUrl  Defaults to the search host; pass the agent host for agent endpoints.
      * @return array<string, mixed>
      */
-    public function getStorefront(string $path, array $query = [], array $identity = []): array
+    public function getStorefront(string $path, array $query = [], array $identity = [], ?string $baseUrl = null): array
     {
-        $url = $this->storefrontUrl($this->config->searchBaseUrl, $path, $query, $identity);
+        $url = $this->storefrontUrl($baseUrl ?? $this->config->searchBaseUrl, $path, $query, $identity);
 
-        return $this->send(fn () => $this->storefrontRequest()->get($url), $url);
+        return $this->send(fn () => $this->storefrontRequest()->acceptJson()->get($url), $url);
     }
 
     /**
-     * Build a full storefront URL: endpoint parameters, then `key` and the
-     * shopper identity parameters (endpoint values win if both are set).
+     * Open a Server-Sent Events stream on a storefront endpoint.
+     *
+     * The response body is returned unread so the caller can parse events as
+     * they arrive. `stream_timeout` bounds connecting and each read; the
+     * caller enforces the total duration.
+     *
+     * @throws ConnectionException|ApiException
+     */
+    public function openStorefrontStream(#[SensitiveParameter] string $url): StreamInterface
+    {
+        try {
+            $response = $this->storefrontRequest()
+                ->accept('text/event-stream')
+                ->timeout($this->config->streamTimeout)
+                ->withOptions(['stream' => true])
+                ->get($url);
+        } catch (HttpConnectionException $e) {
+            throw ConnectionException::fromHttpClient($e, $url);
+        }
+
+        $this->throwIfFailed($response);
+
+        return $response->toPsrResponse()->getBody();
+    }
+
+    /**
+     * Build a full storefront URL: `key`, the shopper identity parameters,
+     * then the endpoint parameters.
+     *
+     * Endpoint parameters can't replace `key` or the identity parameters;
+     * identity is changed through $identity so consent and validation apply.
      *
      * @param  array<string, mixed>  $query
      * @param  array<string, mixed>  $identity
@@ -79,26 +118,25 @@ class ApiClient
     public function storefrontUrl(string $baseUrl, string $path, array $query = [], array $identity = []): string
     {
         $parameters = array_merge(
+            $query,
             ['key' => $this->config->requireApiKey()],
             $this->context->queryParameters($identity),
-            $query,
         );
 
         return $baseUrl.$path.'?'.QueryString::build($parameters);
     }
 
-    /**
-     * A pending request with timeouts, retries and backend-integration headers.
-     */
-    public function storefrontRequest(): PendingRequest
-    {
-        $this->warnIfBackendTokenMissing();
-
-        return $this->baseRequest()->withHeaders($this->context->headers());
-    }
+    /*
+    |--------------------------------------------------------------------------
+    | Catalog endpoints
+    |--------------------------------------------------------------------------
+    */
 
     /**
      * Call a catalog-management endpoint with the API token.
+     *
+     * Only reads are retried. Retrying a write after a timeout could create a
+     * second ingestion task for the same change.
      *
      * @param  array<string, mixed>  $query
      * @param  array<string, mixed>|null  $json  Request body, sent as JSON.
@@ -107,9 +145,6 @@ class ApiClient
     public function catalog(string $method, string $path, array $query = [], ?array $json = null): array
     {
         $url = $this->catalogUrl($path, $query);
-
-        // Only reads are retried. Retrying a write after a timeout could
-        // create a second ingestion task for the same change.
         $retry = strtoupper($method) === 'GET';
 
         return $this->send(function () use ($method, $url, $json, $retry) {
@@ -122,58 +157,46 @@ class ApiClient
     }
 
     /**
+     * Upload files as multipart form data to a catalog endpoint.
+     *
+     * Sent exactly once: a file stream that has been read would be empty on a
+     * retry, and a retried upload could start a second ingestion task.
+     *
+     * @param  array<string, array{0: resource, 1: string}>  $files  [form field => [open file handle, file name]]
+     * @return array<string, mixed>
+     */
+    public function uploadToCatalog(string $method, string $url, array $files, int $timeout): array
+    {
+        $request = $this->catalogRequest(retry: false)->timeout($timeout);
+
+        foreach ($files as $fieldName => [$handle, $fileName]) {
+            $request->attach($fieldName, $handle, $fileName);
+        }
+
+        // An (empty) multipart option is what makes Laravel send the attached files.
+        return $this->send(fn () => $request->send($method, $url, ['multipart' => []]), $url);
+    }
+
+    /**
      * Build a catalog URL with `key` and `c` added.
      *
      * @param  array<string, mixed>  $query
      */
-    public function catalogUrl(string $path, array $query = [], ?string $baseUrl = null): string
+    public function catalogUrl(string $path, array $query = []): string
     {
         $parameters = array_merge(
-            ['key' => $this->config->requireApiKey(), 'c' => $this->config->clientIdentifier],
             $query,
+            ['key' => $this->config->requireApiKey(), 'c' => $this->config->clientIdentifier],
         );
 
-        return ($baseUrl ?? $this->config->searchBaseUrl).$path.'?'.QueryString::build($parameters);
+        return $this->config->searchBaseUrl.$path.'?'.QueryString::build($parameters);
     }
 
-    /**
-     * A pending request authenticated with the API token (HTTP Basic,
-     * token as username, empty password).
-     */
-    public function catalogRequest(bool $retry = true): PendingRequest
-    {
-        return $this->baseRequest($retry)
-            ->withBasicAuth($this->config->requireApiToken(), '')
-            ->acceptJson();
-    }
-
-    /**
-     * Run a request, translate failures into this package's exceptions and
-     * return the decoded JSON body (an empty array for an empty body).
-     *
-     * @param  callable(): Response  $request
-     * @param  string  $url  The URL being called, used only to name the host in errors.
-     * @return array<string, mixed>
-     *
-     * @throws ConnectionException|ApiException
-     */
-    public function send(callable $request, string $url = ''): array
-    {
-        try {
-            $response = $request();
-        } catch (HttpConnectionException $e) {
-            throw ConnectionException::fromHttpClient($e, $url);
-        } catch (RequestException $e) {
-            // Only reached if a caller opted into ->throw(); normalise it anyway.
-            $response = $e->response;
-        }
-
-        $this->throwIfFailed($response);
-
-        $decoded = $response->json();
-
-        return is_array($decoded) ? $decoded : [];
-    }
+    /*
+    |--------------------------------------------------------------------------
+    | Responses and errors
+    |--------------------------------------------------------------------------
+    */
 
     /**
      * @throws AuthenticationException|RateLimitException|ApiException
@@ -185,7 +208,11 @@ class ApiClient
         }
 
         $status = $response->status();
-        $body = Str::limit($response->body(), 1000);
+
+        // The body stays out of the message: Constructor's error text can echo
+        // the request (search terms, filter values), and messages end up in
+        // logs and error trackers. It is available from getResponseBody().
+        $body = Str::limit($response->body(), 2000);
 
         throw match (true) {
             $status === 401 => new AuthenticationException(
@@ -203,12 +230,69 @@ class ApiClient
                 $status,
                 $body,
             ),
-            default => new ApiException("Constructor API error ({$status}): {$body}", $status, $body),
+            $status >= 500 => new ApiException("Constructor is unavailable ({$status}). Try again later.", $status, $body),
+            default => new ApiException("Constructor rejected the request ({$status}). See getResponseBody() for details.", $status, $body),
         };
     }
 
     /**
-     * Shared settings: timeout and a retry policy that only retries failures
+     * Reset the once-per-process warning. For tests.
+     *
+     * @internal
+     */
+    public static function flushState(): void
+    {
+        self::$warnedAboutBackendToken = false;
+    }
+
+    /**
+     * Run a request and return the decoded JSON (an empty array for an empty body).
+     *
+     * @param  callable(): Response  $request
+     * @return array<string, mixed>
+     *
+     * @throws ConnectionException|ApiException
+     */
+    private function send(callable $request, #[SensitiveParameter] string $url): array
+    {
+        try {
+            $response = $request();
+        } catch (HttpConnectionException $e) {
+            throw ConnectionException::fromHttpClient($e, $url);
+        } catch (RequestException $e) {
+            $response = $e->response;
+        }
+
+        $this->throwIfFailed($response);
+
+        $decoded = $response->json();
+
+        return is_array($decoded) ? $decoded : [];
+    }
+
+    /**
+     * A pending request with timeouts, retries and backend-integration headers.
+     */
+    private function storefrontRequest(): PendingRequest
+    {
+        $this->warnIfBackendTokenMissing();
+
+        return $this->baseRequest()->withHeaders($this->context->headers());
+    }
+
+    /**
+     * A pending request authenticated with the API token (HTTP Basic,
+     * token as username, empty password).
+     */
+    private function catalogRequest(bool $retry = true): PendingRequest
+    {
+        return $this->baseRequest($retry)
+            ->withBasicAuth($this->config->requireApiToken(), '')
+            ->acceptJson();
+    }
+
+    /**
+     * Shared settings: timeout, and a retry policy that only retries failures
      * that might succeed on a second try.
      */
     private function baseRequest(bool $retry = true): PendingRequest
@@ -219,13 +303,44 @@ class ApiClient
             return $request;
         }
 
-        return $request
-            ->retry(
-                times: $this->config->retryAttempts,
-                sleepMilliseconds: fn (int $attempt) => $this->config->retryDelay * (2 ** ($attempt - 1)),
-                when: fn (Throwable $e) => $this->isRetryable($e),
-                throw: false,
-            );
+        return $request->retry(
+            times: $this->config->retryAttempts,
+            sleepMilliseconds: fn (int $attempt, Throwable $e) => $this->retryDelay($attempt, $e),
+            when: fn (Throwable $e) => $this->isRetryable($e),
+            throw: false,
+        );
+    }
+
+    /**
+     * Exponential backoff, or the server's Retry-After for a 429, capped so a
+     * shopper's page never waits long.
+     */
+    private function retryDelay(int $attempt, Throwable $e): int
+    {
+        $delay = $this->config->retryDelay * (2 ** ($attempt - 1));
+
+        if ($e instanceof RequestException && is_numeric($retryAfter = $e->response->header('Retry-After'))) {
+            $delay = (int) $retryAfter * 1000;
+        }
+
+        return min(self::MAX_RETRY_DELAY_MS, max(0, $delay));
+    }
+
+    /**
+     * Retry connection problems, throttling (429) and server errors (5xx).
+     * Never retry other 4xx errors: the same request will fail the same way.
+     */
+    private function isRetryable(Throwable $e): bool
+    {
+        if ($e instanceof HttpConnectionException) {
+            return true;
+        }
+
+        if ($e instanceof RequestException) {
+            return $e->response->serverError() || $e->response->status() === 429;
+        }
+
+        return false;
     }
 
     /**
@@ -244,22 +359,5 @@ class ApiClient
         Log::channel($this->config->logChannel)->warning(
             'CONSTRUCTOR_BACKEND_TOKEN is not set. Constructor is likely to throttle server-side requests without it. Ask your Constructor contact for the backend security token.'
         );
-    }
-
-    /**
-     * Retry connection problems, throttling (429) and server errors (5xx).
-     * Never retry other 4xx errors: the same request will fail the same way.
-     */
-    private function isRetryable(Throwable $e): bool
-    {
-        if ($e instanceof HttpConnectionException) {
-            return true;
-        }
-
-        if ($e instanceof RequestException) {
-            return $e->response->serverError() || $e->response->status() === 429;
-        }
-
-        return false;
     }
 }

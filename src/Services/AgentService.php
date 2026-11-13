@@ -8,13 +8,15 @@ use ConstructorIO\Laravel\Exceptions\ConnectionException;
 use ConstructorIO\Laravel\Exceptions\ConstructorException;
 use ConstructorIO\Laravel\Exceptions\RateLimitException;
 use ConstructorIO\Laravel\Http\ApiClient;
+use ConstructorIO\Laravel\Http\Path;
 use ConstructorIO\Laravel\Support\ConstructorConfig;
 use ConstructorIO\Laravel\Support\ParameterBuilder;
 use ConstructorIO\Laravel\Support\ResultTransformer;
 use ConstructorIO\Laravel\Support\ServerSentEventParser;
-use Illuminate\Http\Client\ConnectionException as HttpConnectionException;
+use Illuminate\Support\Carbon;
 use Psr\Http\Message\StreamInterface;
 use RuntimeException;
+use SensitiveParameter;
 
 /**
  * Constructor's AI agents, served from agent.cnstrc.com.
@@ -94,7 +96,7 @@ class AgentService
      *
      * @throws ConstructorException
      */
-    public function askShoppingAgent(string $query, ?string $threadId = null, array $options = []): array
+    public function askShoppingAgent(#[SensitiveParameter] string $query, ?string $threadId = null, array $options = []): array
     {
         return $this->askShoppingAgentStreaming($query, static fn () => null, $threadId, $options);
     }
@@ -126,13 +128,13 @@ class AgentService
      *
      * @throws ConstructorException
      */
-    public function askShoppingAgentStreaming(string $query, callable $onEvent, ?string $threadId = null, array $options = []): array
+    public function askShoppingAgentStreaming(#[SensitiveParameter] string $query, callable $onEvent, ?string $threadId = null, array $options = []): array
     {
         $options = $this->withLegacyOptionNames($options);
 
         $url = $this->api->storefrontUrl(
             $this->config->agentBaseUrl,
-            '/v1/intent/'.rawurlencode($query),
+            '/v1/intent/'.Path::segment($query),
             $this->intentParameters($threadId, $options),
             ParameterBuilder::identity($options),
         );
@@ -204,24 +206,24 @@ class AgentService
      *
      * @throws ConstructorException
      */
-    public function askProductQuestion(string $question, string $itemId, ?string $threadId = null, array $options = []): array
+    public function askProductQuestion(#[SensitiveParameter] string $question, string $itemId, ?string $threadId = null, array $options = []): array
     {
         $options = $this->withLegacyOptionNames($options);
 
         $response = $this->getJson(
-            '/v1/item_questions/'.rawurlencode($question).'/answer',
+            '/v1/item_questions/'.Path::segment($question).'/answer',
             $this->answerParameters($itemId, $threadId, $options),
             $options,
         );
 
-        return [
+        return array_merge($this->emptyAnswerResult($threadId), [
             'answer' => (string) ($response['value'] ?? ''),
             'follow_up_questions' => $this->questionTexts($response['follow_up_questions'] ?? []),
             'item_results' => $this->transformer->products($response['item_results']['response']['results'] ?? []),
             'thread_id' => $response['thread_id'] ?? $threadId,
             'qna_result_id' => $response['qna_result_id'] ?? null,
             '_raw' => $response,
-        ];
+        ]);
     }
 
     /**
@@ -243,60 +245,21 @@ class AgentService
      *
      * @throws ConstructorException
      */
-    public function askProductQuestionStreaming(string $question, string $itemId, callable $onEvent, ?string $threadId = null, array $options = []): array
+    public function askProductQuestionStreaming(#[SensitiveParameter] string $question, string $itemId, callable $onEvent, ?string $threadId = null, array $options = []): array
     {
         $options = $this->withLegacyOptionNames($options);
 
         $url = $this->api->storefrontUrl(
             $this->config->agentBaseUrl,
-            '/v1/item_questions/'.rawurlencode($question).'/answer',
+            '/v1/item_questions/'.Path::segment($question).'/answer',
             $this->answerParameters($itemId, $threadId, $options),
             ParameterBuilder::identity($options),
         );
 
-        $result = [
-            'answer' => '',
-            'follow_up_questions' => [],
-            'item_results' => [],
-            'thread_id' => $threadId,
-            'qna_result_id' => null,
-            '_raw' => [],
-        ];
+        $result = $this->emptyAnswerResult($threadId);
 
         $this->streamEvents($url, function (string $event, mixed $data) use (&$result, $onEvent) {
-            $data = is_array($data) ? $data : ['value' => $data];
-            $result['_raw'][] = ['event' => $event, 'data' => $data];
-            $result['thread_id'] = $data['thread_id'] ?? $result['thread_id'];
-            $result['qna_result_id'] = $data['qna_result_id'] ?? $result['qna_result_id'];
-
-            switch ($event) {
-                case 'start':
-                    $onEvent('start', ['thread_id' => $result['thread_id'], 'qna_result_id' => $result['qna_result_id']]);
-                    break;
-
-                case 'message':
-                    $result['answer'] .= $data['text'] ?? '';
-                    $onEvent('message', ['text' => $data['text'] ?? '', 'accumulated' => $result['answer']]);
-                    break;
-
-                case 'follow_up_questions':
-                    $questions = $this->questionTexts($data['questions'] ?? []);
-                    $result['follow_up_questions'] = array_merge($result['follow_up_questions'], $questions);
-                    $onEvent('follow_up_questions', ['questions' => $questions]);
-                    break;
-
-                case 'item_results':
-                    $products = $this->transformer->products($data['response']['results'] ?? []);
-                    $result['item_results'] = array_merge($result['item_results'], $products);
-                    $onEvent('item_results', ['products' => $products]);
-                    break;
-
-                case 'server_error':
-                    $this->failWithServerError($data, $onEvent);
-
-                default:
-                    $onEvent($event, $data);
-            }
+            $this->applyAnswerEvent($event, is_array($data) ? $data : ['value' => $data], $result, $onEvent);
         });
 
         $onEvent('complete', $result);
@@ -317,41 +280,52 @@ class AgentService
      * caller as soon as Constructor sends them. Keep-alive "ping" events are
      * dropped here.
      *
+     * Two guarantees a caller can rely on:
+     *   - The whole response must finish within stream_timeout seconds.
+     *     Pings don't extend it: a stream that only ever sends keep-alives
+     *     would otherwise hold the PHP worker forever.
+     *   - A stream that ends before Constructor's `end` event is a failure,
+     *     not a short answer. It throws instead of returning partial text.
+     *
      * @param  callable(string, mixed): void  $handle
      *
      * @throws ConnectionException|ApiException
      */
-    private function streamEvents(string $url, callable $handle): void
+    private function streamEvents(#[SensitiveParameter] string $url, callable $handle): void
     {
-        try {
-            $response = $this->api->storefrontRequest()
-                ->accept('text/event-stream')
-                ->timeout($this->config->streamTimeout)
-                ->withOptions(['stream' => true])
-                ->get($url);
-        } catch (HttpConnectionException $e) {
-            throw ConnectionException::fromHttpClient($e, $url);
-        }
-
-        $this->api->throwIfFailed($response);
-
-        $body = $response->toPsrResponse()->getBody();
+        $body = $this->api->openStorefrontStream($url);
         $parser = new ServerSentEventParser;
+        $deadline = Carbon::now()->addSeconds($this->config->streamTimeout);
+        $receivedEnd = false;
 
-        $dispatch = function (array $events) use ($handle): void {
+        $dispatch = function (array $events) use ($handle, &$receivedEnd): void {
             foreach ($events as $event) {
-                if ($event['event'] !== 'ping') {
-                    $handle($event['event'], $event['data']);
+                if ($event['event'] === 'ping') {
+                    continue;
                 }
+
+                $receivedEnd = $receivedEnd || $event['event'] === 'end';
+                $handle($event['event'], $event['data']);
             }
         };
 
         try {
             while (! $body->eof()) {
+                if (Carbon::now()->greaterThan($deadline)) {
+                    throw new ConnectionException(
+                        "The Constructor agent response exceeded {$this->config->streamTimeout} seconds (CONSTRUCTOR_STREAM_TIMEOUT)."
+                    );
+                }
+
                 $dispatch($parser->feed($this->readChunk($body)));
             }
 
+            $endedMidEvent = $parser->hasPartialEvent();
             $dispatch($parser->flush());
+
+            if (! $receivedEnd || $endedMidEvent) {
+                throw new ConnectionException('The Constructor agent stream ended before the response was complete.');
+            }
         } finally {
             $body->close();
         }
@@ -371,6 +345,52 @@ class AgentService
             return $body->read(self::STREAM_CHUNK_SIZE);
         } catch (RuntimeException $e) {
             throw new ConnectionException('The Constructor agent stream was interrupted: '.$e->getMessage(), 0, $e);
+        }
+    }
+
+    /**
+     * Fold one Product Insights Agent event into the result and notify the caller.
+     *
+     * @param  array<string, mixed>  $data
+     * @param  array<string, mixed>  $result
+     * @param  callable(string, array<string, mixed>): mixed  $onEvent
+     */
+    private function applyAnswerEvent(string $event, array $data, array &$result, callable $onEvent): void
+    {
+        $result['_raw'][] = ['event' => $event, 'data' => $data];
+        $result['thread_id'] = $data['thread_id'] ?? $result['thread_id'];
+        $result['qna_result_id'] = $data['qna_result_id'] ?? $result['qna_result_id'];
+
+        switch ($event) {
+            case 'start':
+                $onEvent('start', ['thread_id' => $result['thread_id'], 'qna_result_id' => $result['qna_result_id']]);
+                break;
+
+            case 'message':
+                $result['answer'] .= $data['text'] ?? '';
+                $onEvent('message', ['text' => $data['text'] ?? '', 'accumulated' => $result['answer']]);
+                break;
+
+            case 'follow_up_questions':
+                $questions = $this->questionTexts($data['questions'] ?? []);
+                $result['follow_up_questions'] = array_merge($result['follow_up_questions'], $questions);
+                $onEvent('follow_up_questions', ['questions' => $questions]);
+                break;
+
+            case 'item_results':
+                $products = $this->transformer->products($data['response']['results'] ?? []);
+                $result['item_results'] = array_merge($result['item_results'], $products);
+                $onEvent('item_results', ['products' => $products]);
+                break;
+
+            case 'server_error':
+                // failWithServerError() returns `never` (it always throws), so
+                // there is deliberately no `break` falling into `default`.
+                $this->failWithServerError($data, $onEvent);
+
+            default:
+                // "end" and any event added to the API after this package was written.
+                $onEvent($event, $data);
         }
     }
 
@@ -476,6 +496,8 @@ class AgentService
                 break;
 
             case 'server_error':
+                // failWithServerError() returns `never` (it always throws), so
+                // there is deliberately no `break` falling into `default`.
                 $this->failWithServerError($data, $onEvent);
 
             default:
@@ -518,11 +540,9 @@ class AgentService
      * @param  array<string, mixed>  $options
      * @return array<string, mixed>
      */
-    private function getJson(string $path, array $parameters, array $options): array
+    private function getJson(#[SensitiveParameter] string $path, array $parameters, array $options): array
     {
-        $url = $this->api->storefrontUrl($this->config->agentBaseUrl, $path, $parameters, ParameterBuilder::identity($options));
-
-        return $this->api->send(fn () => $this->api->storefrontRequest()->acceptJson()->get($url));
+        return $this->api->getStorefront($path, $parameters, ParameterBuilder::identity($options), $this->config->agentBaseUrl);
     }
 
     /**
@@ -569,7 +589,7 @@ class AgentService
      *   filters      -> pre_filter_expression (the agent has no shopper-facing filters)
      *   session      -> session_id
      *   instance_id  -> client_id
-     *   client       -> the `c` parameter
+     *   client       -> ignored: `c` always comes from config (CONSTRUCTOR_CLIENT_IDENTIFIER)
      *
      * @param  array<string, mixed>  $options
      * @return array<string, mixed>
@@ -626,6 +646,23 @@ class AgentService
             'images' => [],
             'recipe' => null,
             'route' => null,
+            '_raw' => [],
+        ];
+    }
+
+    /**
+     * The Product Insights answer shape, shared by the JSON and streaming calls.
+     *
+     * @return array<string, mixed>
+     */
+    private function emptyAnswerResult(?string $threadId): array
+    {
+        return [
+            'answer' => '',
+            'follow_up_questions' => [],
+            'item_results' => [],
+            'thread_id' => $threadId,
+            'qna_result_id' => null,
             '_raw' => [],
         ];
     }

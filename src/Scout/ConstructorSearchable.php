@@ -42,6 +42,10 @@ interface ConstructorSearchable
 {
     /**
      * The index section this model belongs to, e.g. "Products".
+     *
+     * Base it on the model class or its key only. Queued Scout deletes
+     * restore models with just their key loaded, so a section computed from
+     * other attributes would point the delete at the wrong section.
      */
     public function getConstructorSection(): string;
 
