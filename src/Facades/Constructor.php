@@ -17,6 +17,8 @@ use Illuminate\Support\Facades\Facade;
  *
  * @method static \ConstructorIO\Laravel\DataTransferObjects\SearchResults search(string $query, array<string, mixed> $filters = [], array<string, mixed> $options = [])
  * @method static \ConstructorIO\Laravel\DataTransferObjects\SearchResults naturalLanguageSearch(string $query, array<string, mixed> $filters = [], array<string, mixed> $options = [])
+ * @method static \ConstructorIO\Laravel\DataTransferObjects\SearchResults searchByImage(\SplFileInfo|string $image, array<string, mixed> $options = [])
+ * @method static \ConstructorIO\Laravel\DataTransferObjects\SearchResults filterImageResults(\ConstructorIO\Laravel\DataTransferObjects\SearchResults $imageResults, array<string, mixed> $filters = [], array<string, mixed> $options = [])
  * @method static \ConstructorIO\Laravel\DataTransferObjects\SearchResults browse(string $filterName, string $filterValue, array<string, mixed> $filters = [], array<string, mixed> $options = [])
  * @method static \ConstructorIO\Laravel\DataTransferObjects\SearchResults browseItems(list<string> $itemIds, array<string, mixed> $filters = [], array<string, mixed> $options = [])
  * @method static \ConstructorIO\Laravel\DataTransferObjects\AutocompleteResults autocomplete(string $query, array<string, mixed> $options = [])

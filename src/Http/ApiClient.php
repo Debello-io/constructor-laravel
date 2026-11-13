@@ -24,7 +24,8 @@ use Throwable;
  *
  * Constructor has two kinds of endpoint, and they are called differently:
  *
- *   Storefront  search, browse, autocomplete, recommendations, AI agents.
+ *   Storefront  search, browse, autocomplete, recommendations, AI agents,
+ *               quizzes, image search.
  *               Public (no API token). Must carry the shopper's identity and
  *               the backend security token. See RequestContext.
  *
@@ -79,6 +80,36 @@ class ApiClient
         $url = $this->storefrontUrl($baseUrl ?? $this->config->searchBaseUrl, $path, $query, $identity);
 
         return $this->send(fn () => $this->storefrontRequest()->acceptJson()->get($url), $url);
+    }
+
+    /**
+     * POST a raw request body (an image, for Image Search) to a storefront
+     * endpoint and return the decoded JSON.
+     *
+     * Storefront rules apply: `key` and shopper identity in the query, the
+     * backend headers, never the API token. Retried like GETs: the endpoint
+     * only reads, so sending the same body again has no side effects, and a
+     * string body (unlike a stream) is complete on every attempt.
+     *
+     * @param  string  $body  Sent as-is. Marked sensitive: a shopper's photo is personal data.
+     * @param  array<string, mixed>  $query  Endpoint parameters. Shopper identity is added for you.
+     * @param  array<string, mixed>  $identity  Overrides for client_id / session_id / user_id / origin_referrer.
+     * @return array<string, mixed>
+     */
+    public function postStorefront(
+        string $baseUrl,
+        string $path,
+        #[SensitiveParameter] string $body,
+        string $contentType,
+        array $query = [],
+        array $identity = [],
+    ): array {
+        $url = $this->storefrontUrl($baseUrl, $path, $query, $identity);
+
+        return $this->send(
+            fn () => $this->storefrontRequest()->acceptJson()->withBody($body, $contentType)->post($url),
+            $url,
+        );
     }
 
     /**

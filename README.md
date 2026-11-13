@@ -168,6 +168,17 @@ Voice and conversational queries go to `naturalLanguageSearch()`, which takes th
 $results = Constructor::naturalLanguageSearch('show me a gas grill for under 500 dollars');
 ```
 
+Search by photo with `searchByImage()` ([Image Search](https://docs.constructor.com/reference/v2-image-search-retrieve-search-results), enabled per account by Constructor). Pass the uploaded file; JPEG, PNG, WebP or GIF up to 6 MB, checked from the file's contents before anything is sent. Image Search has no filters, so narrow the matches with `filterImageResults()`:
+
+```php
+$request->validate(['photo' => 'required|image|max:6144']);
+
+$matches = Constructor::searchByImage($request->file('photo'));          // SearchResults
+$weber   = Constructor::filterImageResults($matches, ['brand' => 'Weber']);
+```
+
+A string is treated as image bytes, never as a file path. For a file on your own server, pass `new SplFileInfo($path)`.
+
 Every option (`offset`, `filter_match_types`, `pre_filter_expression`, `hidden_fields`, `fmt_options`, `variations_map`, `user_segments`, `lang`, `parameters`, ...) is documented on [`ParameterBuilder`](src/Support/ParameterBuilder.php).
 
 ### Browse (category, brand and collection pages)
@@ -490,6 +501,7 @@ Every setting is documented in [`config/constructor.php`](config/constructor.php
 | `CONSTRUCTOR_CATALOG_BATCHING_BASE_URL` | `https://batching.catalog.cnstrc.com` | Catalog Batching Service host |
 | `CONSTRUCTOR_SCOUT_SYNC_MODE` | `replace` | `replace` or `patch` model saves |
 | `CONSTRUCTOR_QUIZZES_BASE_URL` | `https://quizzes.cnstrc.com` | Quizzes host (https only) |
+| `CONSTRUCTOR_IMAGE_SEARCH_BASE_URL` | `https://image-search.cnstrc.com` | Image Search host (https only) |
 
 ## Upgrading from 1.x
 

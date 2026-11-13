@@ -50,6 +50,7 @@ final class ConstructorConfig
         public readonly int $catalogBatchSize,
         public readonly string $scoutSyncMode,
         public readonly string $quizzesBaseUrl = 'https://quizzes.cnstrc.com',
+        public readonly string $imageSearchBaseUrl = 'https://image-search.cnstrc.com',
     ) {}
 
     /**
@@ -96,6 +97,10 @@ final class ConstructorConfig
             ))),
             scoutSyncMode: ($config['scout']['sync_mode'] ?? 'replace') === 'patch' ? 'patch' : 'replace',
             quizzesBaseUrl: self::secureUrl('quizzes_base_url', $config['quizzes_base_url'] ?? 'https://quizzes.cnstrc.com'),
+            imageSearchBaseUrl: self::secureUrl(
+                'image_search_base_url',
+                $config['image_search_base_url'] ?? 'https://image-search.cnstrc.com',
+            ),
         );
     }
 

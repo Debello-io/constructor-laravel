@@ -11,12 +11,16 @@ use ConstructorIO\Laravel\Http\Path;
 use ConstructorIO\Laravel\Support\ConstructorConfig;
 use ConstructorIO\Laravel\Support\ParameterBuilder;
 use ConstructorIO\Laravel\Support\ResultTransformer;
+use SensitiveParameter;
+use SplFileInfo;
+use Symfony\Component\HttpFoundation\File\UploadedFile;
 
 /**
  * Search, browse, autocomplete, facets, categories and collections.
  *
- * Every method calls a public storefront endpoint on ac.cnstrc.com and
- * forwards the shopper's identity (see RequestContext). Filters and options
+ * Every method calls a public storefront endpoint on ac.cnstrc.com (image
+ * search: image-search.cnstrc.com) and forwards the shopper's identity (see
+ * RequestContext). Filters and options
  * are documented on ParameterBuilder.
  *
  * Most apps use this through the facade: Constructor::search(...).
@@ -25,6 +29,7 @@ use ConstructorIO\Laravel\Support\ResultTransformer;
  * @see https://docs.constructor.com/reference/v1-search-get-natural-language-search-results
  * @see https://docs.constructor.com/reference/v1-browse-get-browse-results
  * @see https://docs.constructor.com/reference/v1-autocomplete-get-autocomplete-results
+ * @see https://docs.constructor.com/reference/v2-image-search-retrieve-search-results
  */
 class SearchService
 {
@@ -35,6 +40,25 @@ class SearchService
 
     /** Constructor accepts at most this many IDs on /browse/items. */
     private const MAX_BROWSE_ITEM_IDS = 100;
+
+    /** Image Search accepts images up to 6 MB. */
+    public const MAX_IMAGE_BYTES = 6 * 1024 * 1024;
+
+    /**
+     * Formats Image Search accepts, by their file signature ("magic bytes").
+     * WebP is checked separately (its signature isn't a plain prefix). HEIC
+     * is not supported; AVIF only if Constructor enables it for you.
+     *
+     * @see https://docs.constructor.com/docs/products-search-learn-about-image-search
+     */
+    private const IMAGE_SIGNATURES = [
+        'jpeg' => ["\xFF\xD8\xFF"],
+        'png' => ["\x89PNG\r\n\x1A\n"],
+        'gif' => ['GIF87a', 'GIF89a'],
+    ];
+
+    /** Ways Image Search can crop the objects it detects (search_crop_type). */
+    private const IMAGE_CROP_TYPES = ['bbox', 'segment'];
 
     /** Constructor's maximum page size for /browse/facets. */
     private const MAX_FACETS_PER_REQUEST = 1000;
@@ -101,6 +125,99 @@ class SearchService
         }
 
         return $this->fetchResults('naturalLanguageSearch', '/v1/search/natural_language/'.Path::segment($query), $filters, $options);
+    }
+
+    /**
+     * Products that look like a photo, e.g. one the shopper took or uploaded.
+     *
+     *     $results = Constructor::searchByImage($request->file('photo'));
+     *     $results = Constructor::searchByImage($request->file('photo'), ['use_segmentation' => true]);
+     *
+     * $image is an uploaded file (UploadedFile), a file you trust on disk
+     * (new SplFileInfo($path)), or the image bytes themselves (for example
+     * from Storage::get() or a decoded mobile upload). A plain string is
+     * always treated as bytes, never as a path, so shopper input can't make
+     * the server read one of its own files.
+     *
+     * The image must be JPEG, PNG, WebP or GIF, at most 6 MB. That is checked
+     * from the file's contents before anything is sent, and a bad image throws
+     * InvalidArgumentException (validate uploads first: `image|max:6144`).
+     *
+     * Options:
+     *   section            string            Index section (default from config)
+     *   use_segmentation   bool              Detect several objects in the photo and search for each
+     *   return_segments    bool              With use_segmentation: describe each detected object
+     *                                        (metadata['segments'])
+     *   search_crop_type   'bbox'|'segment'  With use_segmentation: crop objects with or without background
+     * plus variations_map, fmt_options, hidden_fields, user_segments,
+     * parameters and identity overrides (see ParameterBuilder).
+     *
+     * Image Search has no filters or pages. To narrow the matches, pass the
+     * results to filterImageResults(). metadata also holds `browse_url`,
+     * `segmentation_used` and `whole_image_search_fallback`.
+     *
+     * @param  array<string, mixed>  $options
+     *
+     * @throws InvalidArgumentException If the image is missing, too large or in an unsupported format.
+     */
+    public function searchByImage(#[SensitiveParameter] SplFileInfo|string $image, array $options = []): SearchResults
+    {
+        // Checked before attempt(): a bad image is the caller's to handle
+        // (tell the shopper), not an outage to log and hide.
+        $bytes = $this->imageBytes($image);
+        $parameters = $this->imageSearchParameters($options);
+
+        return $this->attempt('searchByImage', function () use ($bytes, $parameters, $options) {
+            $response = $this->api->postStorefront(
+                $this->config->imageSearchBaseUrl,
+                '/v2/image_search',
+                $bytes,
+                'application/octet-stream',
+                $parameters,
+                ParameterBuilder::identity($options),
+            );
+
+            $results = is_array($response['response']['results'] ?? null) ? $response['response']['results'] : [];
+
+            return $this->toSearchResults($response, 1, max(1, count($results)), array_filter([
+                'browse_url' => $response['response']['browse_url'] ?? null,
+                'segmentation_used' => $response['segmentation_used'] ?? null,
+                'whole_image_search_fallback' => $response['whole_image_search_fallback'] ?? null,
+                'segments' => $response['segments'] ?? null,
+            ], fn ($value) => $value !== null));
+        }, fn () => SearchResults::empty(1, 1));
+    }
+
+    /**
+     * Narrow Image Search matches with filters, e.g. only Weber grills that
+     * look like the photo.
+     *
+     *     $matches = Constructor::searchByImage($photo);
+     *     $weber = Constructor::filterImageResults($matches, ['brand' => 'Weber']);
+     *
+     * Constructor's documented way to filter image results is to browse the
+     * matched items with filters (the `browse_url` it returns points at
+     * /browse/items). This does that with the matched item IDs, through
+     * browseItems(), so filters, sorting and paging work as they do there.
+     * Only the first 100 matches are used, the most /browse/items accepts.
+     *
+     * @see https://docs.constructor.com/reference/image-search-image-search-results
+     *
+     * @param  array<string, mixed>  $filters  ['facet' => value or [values]]
+     * @param  array<string, mixed>  $options  See ParameterBuilder.
+     */
+    public function filterImageResults(SearchResults $imageResults, array $filters = [], array $options = []): SearchResults
+    {
+        $itemIds = array_slice(array_values(array_filter(
+            array_map(fn (array $product) => (string) ($product['id'] ?? ''), $imageResults->products),
+            fn (string $id) => $id !== '',
+        )), 0, self::MAX_BROWSE_ITEM_IDS);
+
+        if ($itemIds === []) {
+            return SearchResults::empty(ParameterBuilder::page($options), ParameterBuilder::perPage($options));
+        }
+
+        return $this->browseItems($itemIds, $filters, $options);
     }
 
     /**
@@ -600,8 +717,9 @@ class SearchService
 
     /**
      * @param  array<string, mixed>  $response
+     * @param  array<string, mixed>  $extraMetadata  Endpoint-specific details to keep in metadata.
      */
-    protected function toSearchResults(array $response, int $page, int $perPage): SearchResults
+    protected function toSearchResults(array $response, int $page, int $perPage, array $extraMetadata = []): SearchResults
     {
         $body = $response['response'] ?? [];
         $resultId = $response['result_id'] ?? null;
@@ -632,7 +750,7 @@ class SearchService
             page: $page,
             perPage: $perPage,
             facets: $this->transformer->facets($body['facets'] ?? []),
-            metadata: $this->transformer->metadata($response) + array_filter([
+            metadata: $this->transformer->metadata($response) + $extraMetadata + array_filter([
                 'collection' => $body['collection'] ?? null,
                 'features' => $body['features'] ?? null,
                 'result_sources' => $body['result_sources'] ?? null,
@@ -767,6 +885,104 @@ class SearchService
         }
 
         return array_slice(array_values($categories), 0, $limit);
+    }
+
+    /**
+     * The image to send, as bytes, after checking it is a format and size
+     * Image Search accepts.
+     *
+     * @throws InvalidArgumentException
+     */
+    private function imageBytes(#[SensitiveParameter] SplFileInfo|string $image): string
+    {
+        if ($image instanceof SplFileInfo) {
+            if ($image instanceof UploadedFile && ! $image->isValid()) {
+                throw new InvalidArgumentException('The image upload failed: '.$image->getErrorMessage());
+            }
+
+            $path = $image->getRealPath();
+            if ($path === false || ! is_file($path) || ! is_readable($path)) {
+                throw new InvalidArgumentException('The image file does not exist or cannot be read.');
+            }
+
+            // Check the size before reading, so an oversized file never ends up in memory.
+            if ((int) filesize($path) > self::MAX_IMAGE_BYTES) {
+                throw new InvalidArgumentException($this->imageTooLargeMessage());
+            }
+
+            $image = (string) file_get_contents($path);
+        }
+
+        if ($image === '') {
+            throw new InvalidArgumentException('The image is empty.');
+        }
+
+        if (strlen($image) > self::MAX_IMAGE_BYTES) {
+            throw new InvalidArgumentException($this->imageTooLargeMessage());
+        }
+
+        if (! $this->isSupportedImage($image)) {
+            throw new InvalidArgumentException('Image Search accepts JPEG, PNG, WebP or GIF images.');
+        }
+
+        return $image;
+    }
+
+    /**
+     * Whether the bytes start with a JPEG, PNG, GIF or WebP signature. The
+     * contents decide, not the file name or the browser's MIME type, which a
+     * shopper controls.
+     */
+    private function isSupportedImage(string $bytes): bool
+    {
+        // WebP: "RIFF", four size bytes, then "WEBP".
+        if (str_starts_with($bytes, 'RIFF') && substr($bytes, 8, 4) === 'WEBP') {
+            return true;
+        }
+
+        foreach (self::IMAGE_SIGNATURES as $signatures) {
+            foreach ($signatures as $signature) {
+                if (str_starts_with($bytes, $signature)) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private function imageTooLargeMessage(): string
+    {
+        return sprintf('Image Search accepts images up to %d MB.', intdiv(self::MAX_IMAGE_BYTES, 1024 * 1024));
+    }
+
+    /**
+     * Query parameters for /v2/image_search: only the ones the endpoint
+     * documents. It has no filters, sorting or paging.
+     *
+     * @param  array<string, mixed>  $options
+     * @return array<string, mixed>
+     *
+     * @throws InvalidArgumentException
+     */
+    private function imageSearchParameters(array $options): array
+    {
+        $cropType = $options['search_crop_type'] ?? null;
+        if ($cropType !== null && ! in_array($cropType, self::IMAGE_CROP_TYPES, true)) {
+            throw new InvalidArgumentException('search_crop_type must be "bbox" or "segment".');
+        }
+
+        return array_merge(
+            array_filter([
+                'section' => $options['section'] ?? $this->config->defaultSection,
+                'use_segmentation' => isset($options['use_segmentation']) ? (bool) $options['use_segmentation'] : null,
+                'return_segments' => isset($options['return_segments']) ? (bool) $options['return_segments'] : null,
+                'search_crop_type' => $cropType,
+            ], fn ($value) => $value !== null),
+            ParameterBuilder::shared([], array_intersect_key($options, array_flip([
+                'variations_map', 'fmt_options', 'hidden_fields', 'user_segments', 'us', 'parameters',
+            ]))),
+        );
     }
 
     /**

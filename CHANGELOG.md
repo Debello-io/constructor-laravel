@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+- `searchByImage()` for Image Search (`POST /v2/image_search` on `image-search.cnstrc.com`): pass an uploaded file, a trusted `SplFileInfo` or the image bytes; JPEG, PNG, WebP or GIF up to 6 MB, checked from the contents before sending. Supports `use_segmentation`, `return_segments` and `search_crop_type`.
+- `filterImageResults()` to filter, sort and page image matches through `/browse/items`, as Constructor recommends.
+- `image_search_base_url` setting (`CONSTRUCTOR_IMAGE_SEARCH_BASE_URL`).
+- `ApiClient::postStorefront()` for storefront endpoints that take a raw request body.
+
 ## [2.0.0] - 2026-11-13
 
 A full review against Constructor's API reference and backend-integration documentation. See [UPGRADE.md](UPGRADE.md).

@@ -537,6 +537,71 @@ $results = Constructor::naturalLanguageSearch('show me a gas grill for under 500
 
 It takes the same filters and options as `search()` and returns the same `SearchResults`, including redirects, `resultId` and `trackingData()`. See [Natural language search](https://docs.constructor.com/reference/v1-search-get-natural-language-search-results).
 
+### Search by image
+
+[Image Search](https://docs.constructor.com/docs/products-search-learn-about-image-search) finds products that look like a photo the shopper took or uploaded: "I want a grill like this one". Constructor enables it per account; ask your Customer Success Manager. Requests go to `CONSTRUCTOR_IMAGE_SEARCH_BASE_URL` (default `https://image-search.cnstrc.com`) and carry the shopper's identity like other storefront calls.
+
+```php
+use ConstructorIO\Laravel\Exceptions\InvalidArgumentException;
+use ConstructorIO\Laravel\Facades\Constructor;
+use Illuminate\Http\Request;
+
+class ImageSearchController
+{
+    public function __invoke(Request $request)
+    {
+        // Image Search accepts JPEG, PNG, WebP and GIF up to 6 MB. HEIC (the
+        // iPhone default) is not supported, so ask iOS apps to send JPEG.
+        $request->validate(['photo' => 'required|image|mimes:jpeg,png,webp,gif|max:6144']);
+
+        try {
+            $results = Constructor::searchByImage($request->file('photo'), [
+                'use_segmentation' => true,   // a photo of a patio: search for each object in it
+            ]);
+        } catch (InvalidArgumentException $e) {
+            // The file's contents aren't a supported image, whatever its extension says.
+            return back()->withErrors(['photo' => 'Please upload a JPEG, PNG, WebP or GIF image.']);
+        }
+
+        if ($request->filled('brand')) {
+            $results = Constructor::filterImageResults($results, ['brand' => $request->input('brand')]);
+        }
+
+        return view('search.image', ['results' => $results]);
+    }
+}
+```
+
+What you can pass:
+
+| Argument | Meaning |
+|----------|---------|
+| `UploadedFile` | A shopper's upload, as in the controller above |
+| `new SplFileInfo($path)` | A file on your server that you trust |
+| A string | The image bytes, e.g. `Storage::get($path)` or a base64-decoded upload from a mobile app. **Never** read as a path, so shopper input can't make your server send one of its own files. |
+
+The image is checked from its contents (not its name or MIME type, which the shopper controls) before anything is sent. A missing, empty, oversized or unsupported image throws `InvalidArgumentException`, even when `throw_exceptions` is off: it's a problem to show the shopper, not an outage.
+
+Options:
+
+| Option | Meaning |
+|--------|---------|
+| `section` | Index section (default `CONSTRUCTOR_SECTION`) |
+| `use_segmentation` | Detect several objects in the photo and search for each; results are merged |
+| `return_segments` | With `use_segmentation`: describe each detected object in `metadata['segments']` (bounding box, class name, confidence and its own matches) |
+| `search_crop_type` | With `use_segmentation`: `bbox` (default) crops each object as a rectangle, `segment` removes the background |
+| `variations_map`, `fmt_options`, `hidden_fields`, `user_segments` | As for search |
+
+The result is a normal `SearchResults` with the matches in `products`, plus `metadata['browse_url']`, `metadata['segmentation_used']` and `metadata['whole_image_search_fallback']` (segmentation was asked for but failed, so the whole image was searched). Image Search returns one list: there are no pages, sorting or filters.
+
+To filter, sort or page through the matches, use `filterImageResults()`. As Constructor recommends, it browses the matched items with your filters through `/browse/items` (the same request `browse_url` describes), so it accepts the same filters and options as `browseItems()`. Only the first 100 matches are used, the most that endpoint accepts.
+
+```php
+$inStockWeber = Constructor::filterImageResults($results, ['brand' => 'Weber', 'in_stock' => true], ['sort_by' => 'price']);
+```
+
+Put `resultId` on the results container for tracking, as on other result pages. Constructor's tracking guide doesn't yet describe image search pages specifically.
+
 ### Pagination
 
 ```php
@@ -2209,7 +2274,7 @@ Only failures that might succeed on a second try are retried: connection errors,
 | `CONSTRUCTOR_TIMEOUT` | 10 | Seconds for a normal request |
 | `CONSTRUCTOR_STREAM_TIMEOUT` | 120 | Total seconds for a streaming agent response, including keep-alive pings |
 
-`CONSTRUCTOR_SEARCH_BASE_URL`, `CONSTRUCTOR_AGENT_BASE_URL`, `CONSTRUCTOR_QUIZZES_BASE_URL` and `CONSTRUCTOR_CATALOG_BATCHING_BASE_URL` must use `https://`, because requests carry secret tokens. Plain `http://` is accepted only for `localhost` (for a local mock server); anything else throws `ConfigurationException`.
+`CONSTRUCTOR_SEARCH_BASE_URL`, `CONSTRUCTOR_AGENT_BASE_URL`, `CONSTRUCTOR_QUIZZES_BASE_URL`, `CONSTRUCTOR_IMAGE_SEARCH_BASE_URL` and `CONSTRUCTOR_CATALOG_BATCHING_BASE_URL` must use `https://`, because requests carry secret tokens. Plain `http://` is accepted only for `localhost` (for a local mock server); anything else throws `ConfigurationException`.
 
 ---
 
