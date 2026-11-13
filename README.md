@@ -23,7 +23,7 @@ For a full walkthrough with complete controller and view examples, see the **[Us
 ## Requirements
 
 - PHP 8.2+
-- Laravel 11, 12 or 13 (Laravel 13 needs PHP 8.3+)
+- Laravel 12 or 13 (Laravel 13 needs PHP 8.3+)
 - Optional: Laravel Scout 11 for the Scout engine
 
 ## Installation

@@ -82,7 +82,7 @@ A full review against Constructor's API reference and backend-integration docume
 - Task polling now makes its last check at the deadline, and handles a missing status.
 
 ### Removed
-- PHP 8.1 and Laravel 10 support.
+- PHP 8.1, Laravel 10 and Laravel 11 support. Laravel 11 no longer gets security fixes, and Composer blocks installing it.
 - `config/constructor-catalog.php`, which was unused, and `config/scout.php.example`.
 - `searchComplementaryProducts()`, a fashion-specific prompt. Use a `complementary_items` pod.
 - `ConstructorService::verify()` and `getCatalogInfo()`, which called undocumented endpoints.

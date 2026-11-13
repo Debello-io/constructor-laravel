@@ -8,7 +8,7 @@ Estimated effort: **under an hour** for most apps. The 1.x class names still wor
 
 ### 1. Requirements and package name
 
-- PHP **8.2+** and Laravel **11, 12 or 13**. Laravel 10 and PHP 8.1 are end-of-life and no longer supported.
+- PHP **8.2+** and Laravel **12 or 13**. Laravel 10 and 11 and PHP 8.1 no longer get security fixes, so they aren't supported. Composer refuses to install any Laravel 11 release because of open security advisories.
 - The Scout engine needs **Laravel Scout 11**.
 - The package is now `debello-io/constructor-laravel`:
   ```bash

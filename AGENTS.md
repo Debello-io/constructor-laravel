@@ -6,7 +6,7 @@ Guidance for anyone (human or AI agent) changing this repository. Read it before
 
 `debello-io/constructor-laravel` is a Laravel package for [Constructor](https://constructor.com) product discovery: search, browse, autocomplete, recommendations, the AI Shopping Agent / Product Insights Agent, catalog management and a Laravel Scout engine. Constructor has no official PHP SDK, so this package calls the REST API directly and must follow Constructor's rules for a **backend integration** itself.
 
-Supports PHP ^8.2 and Laravel 11, 12 and 13 (Laravel 13 needs PHP 8.3+).
+Supports PHP ^8.2 and Laravel 12 and 13 (Laravel 13 needs PHP 8.3+). Laravel 11 was dropped: it no longer gets security fixes and Composer blocks every release.
 
 ## Architecture map
 

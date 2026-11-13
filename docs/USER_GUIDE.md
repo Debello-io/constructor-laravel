@@ -33,7 +33,7 @@ If you are upgrading from 1.x, read [UPGRADE.md](../UPGRADE.md) first.
 ### Requirements
 
 - PHP 8.2 or later
-- Laravel 11, 12 or 13 (Laravel 13 needs PHP 8.3+)
+- Laravel 12 or 13 (Laravel 13 needs PHP 8.3+)
 - A Constructor index, and the [Constructor beacon](https://docs.constructor.com/docs/integrating-with-constructor-behavioral-tracking) on every page of your site
 
 ### Installation
