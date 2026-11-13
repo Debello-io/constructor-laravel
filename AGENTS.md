@@ -4,7 +4,7 @@ Guidance for anyone (human or AI agent) changing this repository. Read it before
 
 ## What this is
 
-`debello-io/constructor-laravel` is a Laravel package for [Constructor](https://constructor.com) product discovery: search, browse, autocomplete, recommendations, the AI Shopping Agent / Product Insights Agent, catalog management and a Laravel Scout engine. Constructor has no official PHP SDK, so this package calls the REST API directly and must follow Constructor's rules for a **backend integration** itself.
+`debello-io/constructor-laravel` is a Laravel package for [Constructor](https://constructor.com) product discovery: search (including natural language and image search), browse, autocomplete, recommendations, quizzes, the AI agents and Agent Insights, product details, shopper preferences, catalog and merchandising management, offline behavioral data, a Laravel Scout engine, Blade tracking components, Artisan commands and a test fake. Constructor has no official PHP SDK, so this package calls the REST API directly and must follow Constructor's rules for a **backend integration** itself.
 
 Supports PHP ^8.2 and Laravel 12 and 13 (Laravel 13 needs PHP 8.3+). Laravel 11 was dropped: it no longer gets security fixes and Composer blocks every release.
 
@@ -15,26 +15,35 @@ Supports PHP ^8.2 and Laravel 12 and 13 (Laravel 13 needs PHP 8.3+). Laravel 11 
 | `src/Constructor.php` | Entry point and facade target. Delegates to the services; implements `Contracts\SearchProvider`. |
 | `src/Facades/Constructor.php` | Facade. Keep its `@method` list in sync with `Constructor`. |
 | `src/ConstructorServiceProvider.php` | Bindings (singletons), config publishing, Scout driver, 1.x aliases, `EncryptCookies::except` for beacon cookies. |
-| `src/Http/ApiClient.php` | **The only place that sends HTTP**, including SSE streams (`openStorefrontStream()`) and multipart uploads (`uploadToCatalog()`). Storefront vs catalog requests, retry policy, error → exception mapping. `send()`, `storefrontRequest()` and `catalogRequest()` are private. |
+| `src/Http/ApiClient.php` | **The only place that sends HTTP**, including SSE streams (`openStorefrontStream()`, GET or POST), storefront POSTs (`postStorefrontBody()` for raw bytes, retried; `postStorefrontJson()`, never retried), multipart uploads (`uploadToCatalog()`) and the User profile API (`userProfile()`, Bearer token). Storefront vs catalog requests, retry policy, error → exception mapping. `send()`, `storefrontRequest()` and `catalogRequest()` are private. |
 | `src/Http/Path.php` | `Path::segment()`: encodes one dynamic path segment, including dot-only segments (`.`, `..`). Use it for **every** dynamic segment. |
 | `src/Http/QueryString.php` | Builds Constructor-style query strings (repeated keys, deepObject brackets, RFC 3986). |
 | `src/Support/ConstructorConfig.php` | Typed, validated view of `config/constructor.php`. Read config through this, not `config()`. |
 | `src/Support/RequestContext.php` | Shopper identity for backend integration: `i`, `s`, `ui`, `c`, `_dt`, `origin_referrer` and headers. |
 | `src/Support/ParameterBuilder.php` | Translates friendly options (`per_page`, `range_filters`, ...) into API parameters. Documents every option. |
 | `src/Support/ResultTransformer.php` | Shared response → array mapping for products, facets, groups and collections. |
+| `src/Support/ResponseCache.php`, `src/Concerns/CachesResponses.php` | Opt-in cache (`constructor.cache`) for responses that are the same for every shopper: category tree, facets, collections. Never for anything personalized. Failures and fallbacks are never cached. |
+| `src/Concerns/ReadsEventStreams.php` | The SSE reading loop (deadline, truncation) shared by `AgentService` and `InsightsService`. |
 | `src/Support/CatalogRecords.php` | Moves non-top-level fields into `data` for items, variations and item groups before a catalog write. |
-| `src/Services/SearchService.php` | Search, natural language search, browse, browse by IDs, autocomplete (incl. per-section filters), zero state, facets, facets with options, groups, collections, recipes. |
+| `src/Services/SearchService.php` | Search, natural language search, image search (`image_search_base_url`, raw-body POST), browse, browse by IDs, autocomplete (incl. per-section filters), zero state, facets, facets with options, groups, collections, recipes. |
 | `src/Services/RecommendationService.php` | Recommendation pods (`getRecommendations()`) and whole pages of pods (`getPage()`, `/recommendations/v1/pages`). |
 | `src/Services/QuizService.php` | Quizzes on `quizzes_base_url`: next question, results, results config. Storefront read with shopper identity. |
 | `src/Services/AgentService.php` | AI Shopping Agent (`/v1/intent`, SSE) and Product Insights Agent (`/v1/item_questions`). |
+| `src/Services/InsightsService.php` | Agent Insights (`/v1/agent_insights/*`: search overviews, chat, Q&A, recommendations, query refinement). POST with a JSON body, JSON or SSE; 422 means "declined", never an error. |
+| `src/Services/ProductDetailsService.php` | Product details (`product_details_base_url`, `/v1/items`, `/v1/variations`): enriched attributes and badges. Storefront read. |
+| `src/Services/PreferenceService.php` | Shopper preferences (User profile API, `user_profile_base_url`). Personal data: follows the `ui` and consent rules; values never logged. Uses `user_profile_token` only. |
+| `src/Services/ConfigurationService.php`, `src/Services/Configuration/` | Merchandising configuration: redirect rules, synonym groups, one-way synonyms, sort options, facets, facet options, refined queries. One CRUD pattern (`ConfigurationResource`). Uses the API token. |
 | `src/Support/ServerSentEventParser.php` | Incremental SSE parser used by `AgentService`. |
 | `src/Services/CatalogService.php` | Catalog uploads; `/v2/items`, `/v2/variations` and `/v2/item_groups`; task polling. Uses the API token. |
 | `src/Services/CatalogBatchingService.php` | The Catalog Batching Service on `catalog_batching_base_url`, for frequent small item and variation updates. 100 records per request. Uses the API token. |
 | `src/Services/BehaviorService.php` | Offline purchases and returns (`/v1/offline_behavioral_actions`), validated before sending, 100 per request. Uses the API token. |
+| `src/Console/` | `constructor:verify`, `constructor:upload`, `constructor:task`. Never print tokens. |
+| `src/View/Components/`, `resources/views/` | `<x-constructor::...>` tracking components (data-cnstrc-* attributes and the `cnstrc-data` tag). Every attribute is checked against the data-driven tracking docs; output is escaped. |
+| `src/Testing/` | `Constructor::fake()`: `ConstructorFake` (recording, stubs, assertions) and `OfflineApiClient` (never sends). Guard tests fail when a new `Constructor` method has no fake override or a new sending `ApiClient` method isn't offline. |
 | `src/Scout/` | `ConstructorEngine` (Scout driver), `SearchResultCollection`, and the optional `ConstructorSearchable` model interface (`getConstructorSection()`, `toConstructorItem()`). |
 | `src/Concerns/HandlesStorefrontFailures.php` | Graceful-failure policy for storefront reads. |
 | `src/Exceptions/` | `ConstructorException` base, plus `ConfigurationException`, `ConnectionException`, `ApiException`, `AuthenticationException` (401/403), `RateLimitException` (429), `InvalidArgumentException` (bad caller input), `InvalidCatalogDataException`, `TaskTimeoutException`. |
-| `src/DataTransferObjects/` | `SearchResults`, `AutocompleteResults`, `RecommendationResults`, `RecommendationPageResults`, `QuizQuestion`, `QuizResults` (readonly). |
+| `src/DataTransferObjects/` | `SearchResults`, `AutocompleteResults`, `RecommendationResults`, `RecommendationPageResults`, `QuizQuestion`, `QuizResults`, `AgentInsight` (readonly). |
 | `src/Services/Search/ConstructorSandboxSearch.php`, `src/Services/ConstructorAgentService.php`, `src/Services/ConstructorService.php`, `src/Search/ConstructorEngine.php`, `src/Collections/`, `src/Contracts/SandboxSearchContract.php` | **Deprecated 1.x names**, `class_alias` stubs only. Never add code to them; remove in 3.0. |
 | `config/constructor.php` | All settings, each with a comment explaining it. |
 | `tests/` | PHPUnit + Orchestra Testbench. `tests/TestCase.php` has the shared helpers. |
@@ -46,6 +55,7 @@ Supports PHP ^8.2 and Laravel 12 and 13 (Laravel 13 needs PHP 8.3+). Laravel 11 
 | `api_key` | Public index key (`key_...`) | `key` query parameter on every request |
 | `api_token` | Secret dashboard API token | **Only** catalog endpoints (items, variations, item groups, uploads, tasks, the batching service, offline behavioral actions), as HTTP Basic username with an empty password |
 | `backend_token` | Secret backend security token from Constructor | **Only** the `x-cnstrc-token` header on storefront and agent requests |
+| `user_profile_token` | Secret dashboard token with the `user_profile.user_preferences(w)` scope | **Only** the User profile API (shopper preferences), as `Authorization: Bearer`. Never falls back to `api_token`. |
 
 Never fall back from one to another (the 1.x code sent `api_token` as `x-cnstrc-token`, which was wrong). Never put `api_token` on storefront requests. Never log any token.
 
@@ -92,7 +102,7 @@ Source: [Required parameters](https://docs.constructor.com/docs/integrating-with
 - Names say what things are (`SearchService`, `CatalogService`). No leftovers from demo apps ("Sandbox", fashion/outfit helpers).
 - No dead code, no commented-out code, no unused config keys.
 - Public API changes need: a facade `@method` update, a README section, a CHANGELOG entry, and an UPGRADE.md note if they break.
-- A new config key needs a comment in `config/constructor.php`, a property in `ConstructorConfig`, a line in `.env.example` and a README mention. Recent ones: `identity.require_consent`, `catalog.batch_size` (replaces `scout.batch_size`, which is still read as a fallback), `scout.sync_mode` (`replace` or `patch`), `quizzes_base_url`, `catalog_batching_base_url`. Base URLs must be https (http only for localhost).
+- A new config key needs a comment in `config/constructor.php`, a property in `ConstructorConfig`, a line in `.env.example` and a README mention. Recent ones: `identity.require_consent`, `catalog.batch_size` (replaces `scout.batch_size`, which is still read as a fallback), `scout.sync_mode` (`replace` or `patch`), `quizzes_base_url`, `catalog_batching_base_url`, `image_search_base_url`, `product_details_base_url`, `user_profile_base_url`, `user_profile_token`, `cache.*`. Base URLs must be https (http only for localhost).
 - Option names follow one convention: `page` / `per_page` for paged lists, `limit` for lists that aren't paged, `*_limit` for one part of a response (`children_limit`). Accept Constructor's own name or the 1.x name as an alias (`num_results`, `max_items`), never as the documented one.
 
 ## Verify against Constructor's docs first
@@ -136,4 +146,5 @@ composer check     # lint + analyse + test: run before every commit
 - Don't read `$_COOKIE`, `$_SERVER` or call `session()` in services. Go through `RequestContext`.
 - Don't call `Http::` directly from services. Go through `ApiClient`.
 - Don't add code to the deprecated alias files.
+- Don't add a public `Constructor` method or a sending `ApiClient` method without its `ConstructorFake` / `OfflineApiClient` override: a faked app must never reach Constructor.
 - Don't commit `.env` files or real credentials, even in tests.
