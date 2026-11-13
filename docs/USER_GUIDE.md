@@ -399,7 +399,7 @@ Every method that returns products uses the same flat shape:
     'variations' => [...],
     'variations_map' => null,
     'is_slotted' => false,        // pinned in place by a merchandising rule
-    'is_sponsored' => false,      // a Sponsored Listing (labels.is_retail_media)
+    'is_sponsored' => false,      // an ad (labels.is_retail_media or labels.is_sponsored)
     'sponsored_campaign_id' => null,
     'sponsored_campaign_owner' => null,
     'labels' => [],               // all labels Constructor sent, unmodified
@@ -419,7 +419,7 @@ $product['_raw']['cooking_area_sq_in'] ?? null;
 
 When `is_slotted` is true, a merchandising rule pinned the product in place. That is not an advertisement.
 
-When `is_sponsored` is true, the product is a [Sponsored Listing](https://docs.constructor.com/docs/products-retail-media-learn-about-sponsored-listings-implement-sponsored-listings): Constructor flags it with `labels.is_retail_media`. Show a "Sponsored" badge (your region may have legal requirements for the wording), and put the campaign details on the result element so the beacon can attribute the ad's views and clicks:
+When `is_sponsored` is true, the product is a [Sponsored Listing](https://docs.constructor.com/docs/products-retail-media-learn-about-sponsored-listings-implement-sponsored-listings): Constructor flags it with `labels.is_retail_media` (some response docs use `labels.is_sponsored`; the package checks both). Show a "Sponsored" badge (your region may have legal requirements for the wording), and put the campaign details on the result element so the beacon can attribute the ad's views and clicks:
 
 ```blade
 <div data-cnstrc-item-id="{{ $product['id'] }}"
@@ -776,6 +776,22 @@ $recipes = $results->sections['Recipes'] ?? [];
 Category suggestions come from a `Categories` or `Groups` section if your index has one. Otherwise, pass `'include_categories_from_products' => true` to build them from the products' categories.
 
 Autocomplete also accepts `filters`, `pre_filter_expression`, `hidden_fields`, `user_segments` and the identity overrides.
+
+### Filtering one section
+
+`filters` and `pre_filter_expression` apply to every section. To narrow only the product previews (for example, to in-stock items on a store's own site), key them by section name:
+
+```php
+Constructor::autocomplete('smoker', [
+    'section_filters' => ['Products' => ['in_stock' => true, 'brand' => ['Traeger', 'Weber']]],
+]);
+
+Constructor::autocomplete('smoker', [
+    'section_pre_filter_expression' => ['Products' => ['name' => 'store_id', 'value' => 'austin-tx']],
+]);
+```
+
+These are sent as `filters[Products][in_stock]=True` and `pre_filter_expression[Products]={...}`. You can combine `filters` with `section_filters`, but not `pre_filter_expression` with `section_pre_filter_expression`: that throws `InvalidArgumentException`. Filtering the "Search Suggestions" section needs extra configuration on Constructor's side; ask your Constructor contact.
 
 ### Zero state (focused but empty search box)
 

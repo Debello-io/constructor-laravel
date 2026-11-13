@@ -166,9 +166,19 @@ class SearchService
      *         'results_per_section' => ['Search Suggestions' => 5, 'Products' => 6, 'Categories' => 3],
      *     ]);
      *
-     * Other supported options: filters, pre_filter_expression, fmt_options,
-     * hidden_fields, variations_map, user_segments, lang, parameters,
-     * include_categories_from_products, plus identity overrides.
+     * filters and pre_filter_expression apply to every section. To narrow a
+     * single section, key them by section name instead:
+     *
+     *         'section_filters' => ['Products' => ['brand' => 'Weber', 'in_stock' => true]],
+     *         'section_pre_filter_expression' => ['Products' => ['name' => 'brand', 'value' => 'Weber']],
+     *
+     * They are sent as filters[Products][brand]=Weber and
+     * pre_filter_expression[Products]={...}. Filtering "Search Suggestions"
+     * needs extra configuration on Constructor's side.
+     *
+     * Other supported options: fmt_options, hidden_fields, variations_map,
+     * user_segments, lang, parameters, include_categories_from_products, plus
+     * identity overrides.
      *
      * @param  array<string, mixed>  $options
      */
@@ -179,9 +189,16 @@ class SearchService
             return AutocompleteResults::empty();
         }
 
+        // Both would be sent as pre_filter_expression, so they can't be combined.
+        // Checked before the request, so it throws even when failures are logged.
+        if (! empty($options['pre_filter_expression']) && ! empty($options['section_pre_filter_expression'])) {
+            throw new InvalidArgumentException('Pass either pre_filter_expression or section_pre_filter_expression to autocomplete(), not both.');
+        }
+
         return $this->attempt('autocomplete', function () use ($prefix, $options) {
             $parameters = ParameterBuilder::shared($options['filters'] ?? [], $options);
             $parameters['num_section_results_per_page'] = $this->autocompleteSectionLimits($options);
+            $parameters = $this->withSectionFilters($parameters, $options);
 
             $response = $this->api->getStorefront(
                 '/v1/autocomplete/'.Path::segment($prefix),
@@ -666,6 +683,31 @@ class SearchService
             sections: $sections,
             resultId: $response['result_id'] ?? null,
         );
+    }
+
+    /**
+     * Add per-section autocomplete filters (filters[Section][name]=value) and
+     * pre-filter expressions (pre_filter_expression[Section]={json}).
+     *
+     * @param  array<string, mixed>  $parameters
+     * @param  array<string, mixed>  $options
+     * @return array<string, mixed>
+     */
+    private function withSectionFilters(array $parameters, array $options): array
+    {
+        foreach ((array) ($options['section_filters'] ?? []) as $sectionName => $sectionFilters) {
+            $built = is_array($sectionFilters) ? ParameterBuilder::filters($sectionFilters) : [];
+            if ($built !== []) {
+                $parameters['filters'][(string) $sectionName] = $built;
+            }
+        }
+
+        $expressions = (array) ($options['section_pre_filter_expression'] ?? []);
+        if ($expressions !== []) {
+            $parameters['pre_filter_expression'] = array_map(ParameterBuilder::json(...), $expressions);
+        }
+
+        return $parameters;
     }
 
     /**

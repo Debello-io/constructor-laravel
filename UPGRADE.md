@@ -135,5 +135,5 @@ The old names are `class_alias`es and will be removed in 3.0. Constructor argume
 - Every exception extends `ConstructorException`. `AuthenticationException`, `RateLimitException` and `ApiException` carry the status code.
 - Only reads are retried, after connection errors, 429 and 5xx (honouring `Retry-After`, at most 5 s). 1.x also retried 4xx errors.
 - Exception messages no longer include Constructor's response body. Use `ApiException::getResponseBody()`.
-- Sponsored products: use `$product['is_sponsored']`. Constructor flags them with `labels.is_retail_media`, not `labels.is_sponsored`.
+- Sponsored products: use `$product['is_sponsored']`. It is true when Constructor sets either `labels.is_retail_media` (the Sponsored Listings guide) or `labels.is_sponsored` (the response-structure docs).
 - Browse requests are no longer logged at `info` level, and shopper identifiers are never logged.

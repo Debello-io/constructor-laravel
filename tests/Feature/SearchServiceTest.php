@@ -258,6 +258,40 @@ class SearchServiceTest extends TestCase
         $this->service()->browseItems(array_map(fn (int $i) => "SKU-{$i}", range(1, 101)));
     }
 
+    public function test_autocomplete_sends_per_section_filters_and_pre_filters(): void
+    {
+        Http::fake(['*' => Http::response(['sections' => []])]);
+
+        $this->service()->autocomplete('grill', [
+            'filters' => ['in_stock' => true],
+            'section_filters' => ['Products' => ['brand' => ['Weber', 'Traeger']]],
+        ]);
+        $this->service()->autocomplete('grill', [
+            'section_pre_filter_expression' => ['Products' => ['name' => 'brand', 'value' => 'Weber']],
+        ]);
+
+        $requests = Http::recorded();
+        $first = $this->queryOf($requests[0][0]);
+        $this->assertSame(['True'], $first['filters[in_stock]'] ?? null);
+        $this->assertSame(['Weber', 'Traeger'], $first['filters[Products][brand]'] ?? null);
+        $this->assertSame(
+            ['{"name":"brand","value":"Weber"}'],
+            $this->queryOf($requests[1][0])['pre_filter_expression[Products]'] ?? null,
+        );
+    }
+
+    public function test_autocomplete_rejects_global_and_per_section_pre_filters_together(): void
+    {
+        Http::fake();
+
+        $this->expectException(InvalidArgumentException::class);
+
+        $this->service()->autocomplete('grill', [
+            'pre_filter_expression' => ['name' => 'brand', 'value' => 'Weber'],
+            'section_pre_filter_expression' => ['Products' => ['name' => 'brand', 'value' => 'Weber']],
+        ]);
+    }
+
     public function test_autocomplete_section_limits_are_clamped(): void
     {
         Http::fake(['ac.cnstrc.com/*' => Http::response(['sections' => []])]);
@@ -267,13 +301,17 @@ class SearchServiceTest extends TestCase
         Http::assertSent(fn (Request $request) => $this->queryOf($request)['num_section_results_per_page[Products]'] === ['50']);
     }
 
-    public function test_sponsored_listings_are_flagged_from_is_retail_media(): void
+    public function test_sponsored_listings_are_flagged_from_either_sponsored_label(): void
     {
         Http::fake(['ac.cnstrc.com/*' => Http::response(['response' => ['results' => [[
             'value' => 'Sponsored Smoker',
             'data' => ['id' => 'AD-1'],
             'labels' => ['is_retail_media' => true, 'sl_campaign_id' => 'camp-1', 'sl_campaign_owner' => 'Acme Grills'],
-        ], ['value' => 'Organic Smoker', 'data' => ['id' => 'ORG-1']]]]])]);
+        ], ['value' => 'Organic Smoker', 'data' => ['id' => 'ORG-1']], [
+            'value' => 'Promoted Smoker',
+            'data' => ['id' => 'PROMO-1'],
+            'labels' => ['is_sponsored' => true],
+        ]]]])]);
 
         $products = $this->service()->search('smoker')->products;
 
@@ -281,6 +319,8 @@ class SearchServiceTest extends TestCase
         $this->assertSame('camp-1', $products[0]['sponsored_campaign_id']);
         $this->assertSame('Acme Grills', $products[0]['sponsored_campaign_owner']);
         $this->assertFalse($products[1]['is_sponsored']);
+        // The older label from the response-structure docs counts too.
+        $this->assertTrue($products[2]['is_sponsored']);
     }
 
     public function test_available_facets_fetch_every_page_and_respect_hidden_facets(): void

@@ -37,7 +37,8 @@ A full review against Constructor's API reference and backend-integration docume
 - `Scout\ConstructorSearchable` interface for Scout models.
 - Typed exceptions under `ConstructorIO\Laravel\Exceptions`.
 - `throw_exceptions`, `log_channel`, `default_section`, `identity.*`, `stream_timeout`, `catalog.*` and `scout.batch_size` settings.
-- Sponsored Listings support: `is_sponsored`, `sponsored_campaign_id`, `sponsored_campaign_owner` on products.
+- Sponsored Listings support: `is_sponsored` (from `labels.is_retail_media` or `labels.is_sponsored`), `sponsored_campaign_id`, `sponsored_campaign_owner` on products.
+- Per-section autocomplete filters: `section_filters` and `section_pre_filter_expression`.
 - `SearchResults::trackingData()` for the beacon's `cnstrc-data` script tag; `resultId` on `AutocompleteResults`; `relatedBrowsePages`; `variation_slice`; collection `active_overriding_collection`; task `indexed`.
 - `catalog.batch_size`, `scout.sync_mode` (replace or patch), `identity.require_consent`.
 - `naturalLanguageSearch()` for voice and conversational queries (`/v1/search/natural_language/{query}`), returning `SearchResults`.

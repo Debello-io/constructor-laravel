@@ -54,8 +54,11 @@ class ResultTransformer
             // Sponsored Listings: show a "Sponsored" badge when true, and put
             // the campaign ID and owner on the result element
             // (data-cnstrc-sl-campaign-id / -owner) so the beacon attributes it.
+            // The Sponsored Listings guide uses labels.is_retail_media; the
+            // response-structure pages still document labels.is_sponsored for
+            // promoted slots. Either one means the shopper is seeing an ad.
             // @see https://docs.constructor.com/docs/products-retail-media-learn-about-sponsored-listings-implement-sponsored-listings
-            'is_sponsored' => (bool) ($labels['is_retail_media'] ?? false),
+            'is_sponsored' => (bool) ($labels['is_retail_media'] ?? false) || (bool) ($labels['is_sponsored'] ?? false),
             'sponsored_campaign_id' => $labels['sl_campaign_id'] ?? null,
             'sponsored_campaign_owner' => $labels['sl_campaign_owner'] ?? null,
             'labels' => $labels,

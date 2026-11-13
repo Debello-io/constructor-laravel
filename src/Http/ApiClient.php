@@ -230,7 +230,7 @@ class ApiClient
                 $body,
             ),
             $status === 429 => new RateLimitException(
-                'Constructor rate limit reached (429). Server-side requests need CONSTRUCTOR_BACKEND_TOKEN to avoid throttling.',
+                'Constructor rate limit reached (429). For storefront calls, check CONSTRUCTOR_BACKEND_TOKEN is set; for catalog calls, wait and retry.',
                 $status,
                 $body,
             ),

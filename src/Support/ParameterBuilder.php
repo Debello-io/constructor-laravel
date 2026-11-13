@@ -194,7 +194,7 @@ final class ParameterBuilder
     /**
      * Some parameters must be JSON strings. Accept arrays for convenience.
      */
-    private static function json(mixed $value): string
+    public static function json(mixed $value): string
     {
         return is_string($value) ? $value : json_encode($value, JSON_THROW_ON_ERROR);
     }
