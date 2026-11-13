@@ -18,9 +18,11 @@ use Throwable;
  * section and the caller's options, so two indexes, sections or option sets
  * never share an entry. Raw keys and tokens never appear in a cache key.
  *
- * flush() works on every cache store: keys include a "generation" number,
- * and flushing increments it. Old entries are never read again and expire
- * on their own TTL. No cache tags needed.
+ * flush() works on every cache store: keys include a random "generation"
+ * value, and flushing replaces it. Old entries are never read again and
+ * expire on their own TTL. No cache tags and no increment() needed (the
+ * database and memcached stores can't increment a missing key), and an
+ * evicted generation starts a new one instead of reviving old entries.
  *
  * A broken cache store must not take a page down, so store errors are logged
  * and the response is fetched from Constructor as if caching were off.
@@ -49,9 +51,11 @@ final class ResponseCache
      * @param  array<array-key, mixed>  $keyParts  Everything the response depends on.
      * @param  Closure(): T  $compute
      * @param  Closure(): bool  $shouldStore  Called after $compute.
+     * @param  (Closure(mixed): mixed)|null  $prepareForStorage  Strips per-request values (a result_id) from the stored copy;
+     *                                                           the caller that computed the value still gets it unchanged.
      * @return T
      */
-    public function remember(string $operation, string $type, array $keyParts, Closure $compute, Closure $shouldStore): mixed
+    public function remember(string $operation, string $type, array $keyParts, Closure $compute, Closure $shouldStore, ?Closure $prepareForStorage = null): mixed
     {
         try {
             $store = $this->store();
@@ -72,7 +76,8 @@ final class ResponseCache
 
         if ($shouldStore()) {
             try {
-                $store->put($key, ['value' => $value], $this->ttl($type));
+                $stored = $prepareForStorage !== null ? $prepareForStorage($value) : $value;
+                $store->put($key, ['value' => $stored], $this->ttl($type));
             } catch (Throwable $e) {
                 $this->warn($operation, $e);
             }
@@ -87,7 +92,13 @@ final class ResponseCache
      */
     public function flush(): void
     {
-        $this->store()->increment($this->generationKey());
+        // A new random generation, rather than increment(): increment() fails
+        // on a missing key with the database and memcached stores.
+        try {
+            $this->store()->forever($this->generationKey(), self::newGeneration());
+        } catch (Throwable $e) {
+            $this->warn('flushCache', $e);
+        }
     }
 
     /** Seconds to keep one type of response. */
@@ -116,9 +127,21 @@ final class ResponseCache
             self::normalize($keyParts),
         ], JSON_THROW_ON_ERROR));
 
-        $generation = (int) $store->get($this->generationKey(), 0);
+        $generation = $store->get($this->generationKey());
+        if (! is_string($generation) || $generation === '') {
+            // First use, or the store evicted the generation. Starting a new
+            // one (instead of falling back to a fixed value) means entries
+            // written before an eviction can never be served again.
+            $generation = self::newGeneration();
+            $store->forever($this->generationKey(), $generation);
+        }
 
         return "{$this->config->cachePrefix}:{$generation}:{$operation}:{$fingerprint}";
+    }
+
+    private static function newGeneration(): string
+    {
+        return bin2hex(random_bytes(6));
     }
 
     private function generationKey(): string

@@ -172,9 +172,9 @@ final class ConstructorConfig
 
     /**
      * The token for the User profile API (shopper preferences), sent as a
-     * Bearer token. CONSTRUCTOR_USER_PROFILE_TOKEN if set, otherwise the API
-     * token: both are dashboard API tokens, and the endpoint accepts any
-     * token that has the `user_profile.user_preferences(w)` scope.
+     * Bearer token: CONSTRUCTOR_USER_PROFILE_TOKEN, a dashboard API token with
+     * the `user_profile.user_preferences(w)` scope. The API token is never
+     * used in its place.
      *
      * @see https://docs.constructor.com/reference/main-authentication
      *

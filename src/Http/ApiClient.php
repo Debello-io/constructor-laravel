@@ -342,7 +342,7 @@ class ApiClient
 
         throw match (true) {
             $status === 401 => new AuthenticationException(
-                'Constructor rejected the credentials (401). Check CONSTRUCTOR_API_KEY and, for catalog calls, CONSTRUCTOR_API_TOKEN.',
+                'Constructor rejected the credentials (401). Check CONSTRUCTOR_API_KEY; for catalog calls, CONSTRUCTOR_API_TOKEN; for shopper preferences, CONSTRUCTOR_USER_PROFILE_TOKEN.',
                 $status,
                 $body,
             ),

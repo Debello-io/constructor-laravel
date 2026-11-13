@@ -504,7 +504,11 @@ class SearchService
                 'has_more' => $skipped + $perPage < $total,
                 'result_id' => $response['result_id'] ?? null,
             ];
-        }, $empty));
+        }, $empty), prepareForStorage: fn (array $page) => array_merge($page, [
+            // result_id identifies one request; a shared cached copy must not
+            // credit every shopper's events to the first shopper's request.
+            'result_id' => null,
+        ]));
     }
 
     /**

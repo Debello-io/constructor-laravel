@@ -342,7 +342,7 @@ Constructor::getCollection('summer-cookout', ['cache' => false]);
 Constructor::flushCache();
 ```
 
-`flushCache()` works with every cache store, including ones without tags: cache keys carry a generation number, and flushing increments it. Old entries are never read again and expire on their own TTL. Run it from a deploy script or a scheduled command when your merchandising team changes the category tree.
+`flushCache()` works with every cache store, including ones without tags: cache keys carry a random generation value, and flushing replaces it. Old entries are never read again and expire on their own TTL. Run it from a deploy script or a scheduled command when your merchandising team changes the category tree.
 
 ### Mobile apps calling your API
 

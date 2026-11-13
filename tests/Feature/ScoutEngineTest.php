@@ -6,6 +6,7 @@ use ConstructorIO\Laravel\ConstructorServiceProvider;
 use ConstructorIO\Laravel\DataTransferObjects\SearchResults;
 use ConstructorIO\Laravel\Exceptions\ApiException;
 use ConstructorIO\Laravel\Exceptions\ConstructorException;
+use ConstructorIO\Laravel\Facades\Constructor;
 use ConstructorIO\Laravel\Scout\ConstructorEngine;
 use ConstructorIO\Laravel\Scout\ConstructorSearchable;
 use ConstructorIO\Laravel\Scout\SearchResultCollection;
@@ -114,6 +115,20 @@ class ScoutEngineTest extends TestCase
     public function test_the_constructor_driver_is_registered(): void
     {
         $this->assertInstanceOf(ConstructorEngine::class, app(EngineManager::class)->engine('constructor'));
+    }
+
+    public function test_fake_takes_an_already_built_engine_offline(): void
+    {
+        $this->createGrills();
+        // Build the engine with the real client first, as a test's setUp() might.
+        $before = app(EngineManager::class)->engine('constructor');
+        Http::fake();
+
+        Constructor::fake();
+        Grill::all()->searchable();
+
+        $this->assertNotSame($before, app(EngineManager::class)->engine('constructor'));
+        Http::assertNothingSent();
     }
 
     public function test_update_sends_items_with_the_scout_key_as_id_and_extra_fields_in_data(): void

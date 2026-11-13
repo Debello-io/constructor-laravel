@@ -6,8 +6,11 @@ use ConstructorIO\Laravel\Constructor;
 use ConstructorIO\Laravel\Services\SearchService;
 use ConstructorIO\Laravel\Support\ResponseCache;
 use ConstructorIO\Laravel\Tests\TestCase;
+use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Http\Client\Request;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Schema;
 
 /**
  * The opt-in response cache: what is cached, what never is, and how the
@@ -235,6 +238,51 @@ class ResponseCacheTest extends TestCase
         $this->service()->getBrowseGroups();
 
         Http::assertSentCount(2);
+    }
+
+    public function test_flush_cache_works_on_the_database_store(): void
+    {
+        // increment() on a missing key fails on this store, so flush must not rely on it.
+        Schema::create('cache', function (Blueprint $table) {
+            $table->string('key')->primary();
+            $table->mediumText('value');
+            $table->integer('expiration');
+        });
+        $this->enableCache(['constructor.cache.store' => 'database', 'cache.stores.database.lock_connection' => null]);
+        Http::fake(['ac.cnstrc.com/*' => Http::response(self::GROUPS)]);
+
+        $this->service()->getBrowseGroups();
+        app(Constructor::class)->flushCache();
+        $this->service()->getBrowseGroups();
+
+        Http::assertSentCount(2);
+    }
+
+    public function test_entries_from_before_a_flush_stay_stale_if_the_generation_is_evicted(): void
+    {
+        $this->enableCache();
+        Http::fake(['ac.cnstrc.com/*' => Http::response(self::GROUPS)]);
+
+        $this->service()->getBrowseGroups();
+        app(Constructor::class)->flushCache();
+        $this->service()->getBrowseGroups();
+        Cache::store('array')->forget('constructor:generation');
+        $this->service()->getBrowseGroups();
+
+        Http::assertSentCount(3);
+    }
+
+    public function test_cached_facet_pages_drop_the_per_request_result_id(): void
+    {
+        $this->enableCache();
+        Http::fake(['ac.cnstrc.com/*' => Http::response(['result_id' => 'res-first-shopper', 'response' => ['facets' => [], 'total_num_results' => 0]])]);
+
+        $first = $this->service()->getFacetsWithOptions();
+        $second = $this->service()->getFacetsWithOptions();
+
+        $this->assertSame('res-first-shopper', $first['result_id']);
+        $this->assertNull($second['result_id']);
+        Http::assertSentCount(1);
     }
 
     public function test_ttl_overrides_apply_per_response_type(): void

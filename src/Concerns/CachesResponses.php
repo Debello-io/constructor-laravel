@@ -34,9 +34,10 @@ trait CachesResponses
      * @param  array<string, mixed>  $options  The caller's options.
      * @param  Closure(): T  $call  The uncached read, including its attempt() wrapper.
      * @param  array<array-key, mixed>  $arguments  Other arguments the response depends on.
+     * @param  (Closure(mixed): mixed)|null  $prepareForStorage  See ResponseCache::remember().
      * @return T
      */
-    protected function cached(string $operation, string $type, array $options, Closure $call, array $arguments = []): mixed
+    protected function cached(string $operation, string $type, array $options, Closure $call, array $arguments = [], ?Closure $prepareForStorage = null): mixed
     {
         if (! $this->responseCache->enabled() || ($options['cache'] ?? true) === false) {
             return $call();
@@ -51,6 +52,7 @@ trait CachesResponses
             ['options' => $keyOptions, 'arguments' => $arguments],
             $call,
             fn () => $this->fallbacksServed() === $fallbacksBefore,
+            $prepareForStorage,
         );
     }
 }

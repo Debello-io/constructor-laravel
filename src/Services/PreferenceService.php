@@ -8,6 +8,7 @@ use ConstructorIO\Laravel\Exceptions\InvalidArgumentException;
 use ConstructorIO\Laravel\Http\ApiClient;
 use ConstructorIO\Laravel\Support\ConstructorConfig;
 use ConstructorIO\Laravel\Support\RequestContext;
+use SensitiveParameter;
 
 /**
  * Shopper preferences (the User profile API): semi-permanent facts a shopper
@@ -93,7 +94,7 @@ class PreferenceService
      *
      * @throws InvalidArgumentException|ApiException|ConnectionException
      */
-    public function setUserPreference(string|int $userId, string $preferenceKey, string|array $values): void
+    public function setUserPreference(#[SensitiveParameter] string|int $userId, string $preferenceKey, #[SensitiveParameter] string|array $values): void
     {
         $this->setPreferences([[
             'user_id' => $userId,
@@ -119,7 +120,7 @@ class PreferenceService
      * @throws InvalidArgumentException If a preference is missing a field.
      * @throws ApiException|ConnectionException
      */
-    public function setPreferences(array $preferences): int
+    public function setPreferences(#[SensitiveParameter] array $preferences): int
     {
         $normalized = [];
         foreach ($preferences as $preference) {

@@ -22,6 +22,7 @@ use ConstructorIO\Laravel\Services\QuizService;
 use ConstructorIO\Laravel\Services\RecommendationService;
 use ConstructorIO\Laravel\Services\SearchService;
 use Illuminate\Container\Container;
+use Laravel\Scout\EngineManager;
 use PHPUnit\Framework\Assert as PHPUnit;
 use ReflectionMethod;
 use SensitiveParameter;
@@ -100,6 +101,13 @@ class ConstructorFake extends Constructor
             }
         }
         $app->forgetInstance(Constructor::class);
+
+        // Scout's EngineManager caches the engines it has built. One built
+        // before fake() still holds the real catalog client, so a model save
+        // would reach Constructor. Make Scout build a fresh, offline engine.
+        if (class_exists(EngineManager::class) && $app->resolved(EngineManager::class)) {
+            $app->make(EngineManager::class)->forgetDrivers();
+        }
 
         $fake = $app->make(self::class);
         foreach ($stubs as $method => $response) {
