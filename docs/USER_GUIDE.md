@@ -319,7 +319,7 @@ Constructor::catalog()->uploadCatalog('...');     // CatalogService
 
 | Service | Responsibility |
 |---------|----------------|
-| `Services\SearchService` | Search, browse, browse by item ID, autocomplete, zero state, facets, categories, collections, recipes |
+| `Services\SearchService` | Search, natural language search, browse, browse by item ID, autocomplete, zero state, facets, categories, collections, recipes |
 | `Services\RecommendationService` | Recommendation pods |
 | `Services\AgentService` | AI Shopping Agent and Product Insights Agent |
 | `Services\CatalogService` | Catalog uploads, item updates, task status (uses the API token) |
@@ -509,6 +509,16 @@ if ($results->isRedirect()) {
 ```
 
 `$results->redirect` also has `rule_id`, `matched_terms` and `matched_user_segments`.
+
+### Natural language and voice search
+
+For conversational queries, typically from voice input, use `naturalLanguageSearch()`. Convert the speech to text in the browser or app first. Constructor strips filler words and turns phrases it recognises ("under 500 dollars", "in black") into filters:
+
+```php
+$results = Constructor::naturalLanguageSearch('show me a gas grill for under 500 dollars', [], ['per_page' => 24]);
+```
+
+It takes the same filters and options as `search()` and returns the same `SearchResults`, including redirects, `resultId` and `trackingData()`. See [Natural language search](https://docs.constructor.com/reference/v1-search-get-natural-language-search-results).
 
 ### Pagination
 
@@ -944,6 +954,21 @@ Hidden facets and the category facet (`group_id`) are left out; use `getBrowseGr
 ```php
 Constructor::getAvailableFacets(['fmt_options' => ['show_hidden_facets' => true]]);
 ```
+
+### Facets with their options, without a search
+
+`getFacetsWithOptions()` returns facets together with their options for a whole section, so you can build a filter sidebar or a "Shop by" menu without running a search first:
+
+```php
+$page = Constructor::getFacetsWithOptions(['per_page' => 10]);
+
+$page['facets'];      // same shape as $results->facets
+$page['total'];       // facets in the section
+$page['has_more'];    // fetch ['page' => 2] for the next ones
+$page['result_id'];
+```
+
+Constructor returns at most 10 facets per request, so `per_page` is capped at 10; use `page` (or `offset`) for the rest. Counts cover the whole section. Hidden facets need `fmt_options`: `show_hidden_facets`, `hidden_facets` (a list), `show_hidden_facet_options` or `show_protected_facets`. Like other storefront reads, a failure logs a warning and returns an empty page. See [Browse facets with options](https://docs.constructor.com/reference/v1-browse-get-browse-facets-with-options).
 
 ### Facet options with images
 

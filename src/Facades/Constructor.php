@@ -16,6 +16,7 @@ use Illuminate\Support\Facades\Facade;
  *     Constructor::shouldReceive('search')->andReturn(SearchResults::empty());
  *
  * @method static \ConstructorIO\Laravel\DataTransferObjects\SearchResults search(string $query, array<string, mixed> $filters = [], array<string, mixed> $options = [])
+ * @method static \ConstructorIO\Laravel\DataTransferObjects\SearchResults naturalLanguageSearch(string $query, array<string, mixed> $filters = [], array<string, mixed> $options = [])
  * @method static \ConstructorIO\Laravel\DataTransferObjects\SearchResults browse(string $filterName, string $filterValue, array<string, mixed> $filters = [], array<string, mixed> $options = [])
  * @method static \ConstructorIO\Laravel\DataTransferObjects\SearchResults browseItems(list<string> $itemIds, array<string, mixed> $filters = [], array<string, mixed> $options = [])
  * @method static \ConstructorIO\Laravel\DataTransferObjects\AutocompleteResults autocomplete(string $query, array<string, mixed> $options = [])
@@ -24,6 +25,7 @@ use Illuminate\Support\Facades\Facade;
  * @method static \ConstructorIO\Laravel\DataTransferObjects\RecommendationResults getItemRecommendations(string $podId, string|list<string> $itemId, array<string, mixed> $options = [])
  * @method static array<string, array<string, mixed>> getFacets(string $query, array<string, mixed> $filters = [])
  * @method static list<array<string, mixed>> getAvailableFacets(array<string, mixed> $options = [])
+ * @method static array{facets: array<string, array<string, mixed>>, total: int, page: int, per_page: int, has_more: bool, result_id: string|null} getFacetsWithOptions(array<string, mixed> $options = [])
  * @method static list<array<string, mixed>> getFacetValuesWithImages(string $facetName, int $maxItems = 10)
  * @method static list<array<string, mixed>> getBrowseGroups(array<string, mixed> $options = [])
  * @method static list<array<string, mixed>> getCollections(array<string, mixed> $options = [])

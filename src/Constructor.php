@@ -107,6 +107,15 @@ class Constructor implements SearchProvider
         return $this->search->search($query, $filters, $options);
     }
 
+    /**
+     * @param  array<string, mixed>  $filters
+     * @param  array<string, mixed>  $options  See ParameterBuilder.
+     */
+    public function naturalLanguageSearch(string $query, array $filters = [], array $options = []): SearchResults
+    {
+        return $this->search->naturalLanguageSearch($query, $filters, $options);
+    }
+
     public function browse(string $filterName, string $filterValue, array $filters = [], array $options = []): SearchResults
     {
         return $this->search->browse($filterName, $filterValue, $filters, $options);
@@ -143,6 +152,15 @@ class Constructor implements SearchProvider
     public function getAvailableFacets(array $options = []): array
     {
         return $this->search->getAvailableFacets($options);
+    }
+
+    /**
+     * @param  array<string, mixed>  $options  section, page, offset, per_page (max 10), fmt_options, user_segments
+     * @return array{facets: array<string, array<string, mixed>>, total: int, page: int, per_page: int, has_more: bool, result_id: string|null}
+     */
+    public function getFacetsWithOptions(array $options = []): array
+    {
+        return $this->search->getFacetsWithOptions($options);
     }
 
     public function getFacetValuesWithImages(string $facetName, int $maxItems = 10): array

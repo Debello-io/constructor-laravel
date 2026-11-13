@@ -22,6 +22,7 @@ use ConstructorIO\Laravel\Support\ResultTransformer;
  * Most apps use this through the facade: Constructor::search(...).
  *
  * @see https://docs.constructor.com/reference/v1-search-get-search-results
+ * @see https://docs.constructor.com/reference/v1-search-get-natural-language-search-results
  * @see https://docs.constructor.com/reference/v1-browse-get-browse-results
  * @see https://docs.constructor.com/reference/v1-autocomplete-get-autocomplete-results
  */
@@ -37,6 +38,9 @@ class SearchService
 
     /** Constructor's maximum page size for /browse/facets. */
     private const MAX_FACETS_PER_REQUEST = 1000;
+
+    /** Constructor's maximum (and default) page size for /browse/facets_with_options. */
+    private const MAX_FACETS_WITH_OPTIONS_PER_PAGE = 10;
 
     /** Constructor allows 0-50 results per autocomplete section. */
     private const MAX_AUTOCOMPLETE_SECTION_RESULTS = 50;
@@ -72,6 +76,31 @@ class SearchService
         }
 
         return $this->fetchResults('search', '/v1/search/'.Path::segment($query), $filters, $options);
+    }
+
+    /**
+     * Search with a spoken or conversational query, e.g. from voice input.
+     *
+     *     Constructor::naturalLanguageSearch('show me gas grills under 500 dollars');
+     *
+     * Constructor strips filler words from the query and turns phrases it
+     * recognises ("under 500 dollars", "in black") into filters. Convert speech
+     * to text in the browser or app first. Takes the same filters and options
+     * as search(), and returns the same SearchResults, including redirects.
+     *
+     * @see https://docs.constructor.com/reference/v1-search-get-natural-language-search-results
+     *
+     * @param  array<string, mixed>  $filters  ['facet' => value or [values]]
+     * @param  array<string, mixed>  $options  See ParameterBuilder.
+     */
+    public function naturalLanguageSearch(string $query, array $filters = [], array $options = []): SearchResults
+    {
+        $query = trim($query);
+        if ($query === '') {
+            return SearchResults::empty(ParameterBuilder::page($options), ParameterBuilder::perPage($options));
+        }
+
+        return $this->fetchResults('naturalLanguageSearch', '/v1/search/natural_language/'.Path::segment($query), $filters, $options);
     }
 
     /**
@@ -259,6 +288,78 @@ class SearchService
 
             return $facets;
         }, fn () => []);
+    }
+
+    /**
+     * Facets together with their options, a page at a time, for building a
+     * filter sidebar or "Shop by" menus without running a search.
+     *
+     *     $page = Constructor::getFacetsWithOptions(['per_page' => 10]);
+     *     $page['facets']['brand']['options'];   // [['value' => 'Weber', 'count' => 12, ...], ...]
+     *     $page['has_more'];                     // request 'page' => 2 for the next facets
+     *
+     * Facets use the same shape as SearchResults::$facets. Counts cover the
+     * whole section. Constructor returns at most 10 facets per request, so
+     * per_page is capped at 10.
+     *
+     * Options:
+     *   section        string  Index section, default from config
+     *   page           int     Page of facets, starting at 1
+     *   offset         int     Facets to skip. Use instead of page.
+     *   per_page       int     Facets per page (1-10, default 10)
+     *   fmt_options    array   show_hidden_facets, hidden_facets, show_hidden_facet_options, show_protected_facets
+     *   user_segments  list    Segments (`us`)
+     *   parameters     array   Any other API parameter, passed through as-is
+     * plus the shopper identity overrides described on ParameterBuilder.
+     *
+     * @see https://docs.constructor.com/reference/v1-browse-get-browse-facets-with-options
+     *
+     * @param  array<string, mixed>  $options
+     * @return array{facets: array<string, array<string, mixed>>, total: int, page: int, per_page: int, has_more: bool, result_id: string|null}
+     */
+    public function getFacetsWithOptions(array $options = []): array
+    {
+        $perPage = min(self::MAX_FACETS_WITH_OPTIONS_PER_PAGE, max(1, (int) ($options['per_page'] ?? self::MAX_FACETS_WITH_OPTIONS_PER_PAGE)));
+        $offset = isset($options['offset']) ? max(0, (int) $options['offset']) : null;
+        $page = $offset !== null ? intdiv($offset, $perPage) + 1 : ParameterBuilder::page($options);
+
+        $empty = fn () => ['facets' => [], 'total' => 0, 'page' => $page, 'per_page' => $perPage, 'has_more' => false, 'result_id' => null];
+
+        return $this->attempt('getFacetsWithOptions', function () use ($options, $perPage, $offset, $page) {
+            $parameters = $this->sectionParameters($options) + ['num_results_per_page' => $perPage];
+
+            // The API rejects page and offset together.
+            if ($offset !== null) {
+                $parameters['offset'] = $offset;
+            } else {
+                $parameters['page'] = $page;
+            }
+
+            $segments = $options['user_segments'] ?? $options['us'] ?? null;
+            if (! empty($segments)) {
+                $parameters['us'] = array_values((array) $segments);
+            }
+
+            $response = $this->api->getStorefront(
+                '/browse/facets_with_options',
+                array_merge($parameters, $options['parameters'] ?? []),
+                ParameterBuilder::identity($options),
+            );
+
+            $body = $response['response'] ?? [];
+            $facets = $this->transformer->facets(is_array($body['facets'] ?? null) ? $body['facets'] : []);
+            $total = (int) ($body['total_num_results'] ?? count($facets));
+            $skipped = $offset ?? ($page - 1) * $perPage;
+
+            return [
+                'facets' => $facets,
+                'total' => $total,
+                'page' => $page,
+                'per_page' => $perPage,
+                'has_more' => $skipped + $perPage < $total,
+                'result_id' => $response['result_id'] ?? null,
+            ];
+        }, $empty);
     }
 
     /**
