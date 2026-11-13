@@ -75,11 +75,14 @@ return [
     |                   catalog management and offline behavioral actions.
     | agent_base_url    AI Shopping Agent and Product Insights Agent.
     | quizzes_base_url  Quizzes (next question and results).
+    | image_search_base_url
+    |                   Image Search (search by photo).
     | catalog_batching_base_url
     |                   The Catalog Batching Service, for frequent small item
     |                   and variation updates such as price and stock.
     |
     | @see https://docs.constructor.com/reference/v1-quizzes-get-next-question
+    | @see https://docs.constructor.com/reference/v2-image-search-retrieve-search-results
     | @see https://docs.constructor.com/reference/v2-batching-items-update-items
     |
     */
@@ -89,6 +92,8 @@ return [
     'agent_base_url' => env('CONSTRUCTOR_AGENT_BASE_URL', 'https://agent.cnstrc.com'),
 
     'quizzes_base_url' => env('CONSTRUCTOR_QUIZZES_BASE_URL', 'https://quizzes.cnstrc.com'),
+
+    'image_search_base_url' => env('CONSTRUCTOR_IMAGE_SEARCH_BASE_URL', 'https://image-search.cnstrc.com'),
 
     'catalog_batching_base_url' => env('CONSTRUCTOR_CATALOG_BATCHING_BASE_URL', 'https://batching.catalog.cnstrc.com'),
 

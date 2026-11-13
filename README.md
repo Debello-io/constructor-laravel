@@ -168,6 +168,17 @@ Voice and conversational queries go to `naturalLanguageSearch()`, which takes th
 $results = Constructor::naturalLanguageSearch('show me a gas grill for under 500 dollars');
 ```
 
+Search by photo with `searchByImage()` ([Image Search](https://docs.constructor.com/reference/v2-image-search-retrieve-search-results), enabled per account by Constructor). Pass the uploaded file; JPEG, PNG, WebP or GIF up to 6 MB, checked from the file's contents before anything is sent. Image Search has no filters, so narrow the matches with `filterImageResults()`:
+
+```php
+$request->validate(['photo' => 'required|image|max:6144']);
+
+$matches = Constructor::searchByImage($request->file('photo'));          // SearchResults
+$weber   = Constructor::filterImageResults($matches, ['brand' => 'Weber']);
+```
+
+A string is treated as image bytes, never as a file path. For a file on your own server, pass `new SplFileInfo($path)`.
+
 Every option (`offset`, `filter_match_types`, `pre_filter_expression`, `hidden_fields`, `fmt_options`, `variations_map`, `user_segments`, `lang`, `parameters`, ...) is documented on [`ParameterBuilder`](src/Support/ParameterBuilder.php).
 
 ### Browse (category, brand and collection pages)
@@ -522,6 +533,7 @@ Every setting is documented in [`config/constructor.php`](config/constructor.php
 | `CONSTRUCTOR_CACHE_ENABLED` | `false` | Cache category, facet and collection responses |
 | `CONSTRUCTOR_CACHE_STORE` / `CONSTRUCTOR_CACHE_PREFIX` | default store / `constructor` | Where cached responses go |
 | `CONSTRUCTOR_CACHE_TTL` | `600` | Seconds to keep a cached response; `CONSTRUCTOR_CACHE_TTL_CATEGORIES`, `_FACETS` and `_COLLECTIONS` override it per type |
+| `CONSTRUCTOR_IMAGE_SEARCH_BASE_URL` | `https://image-search.cnstrc.com` | Image Search host (https only) |
 
 ## Upgrading from 1.x
 

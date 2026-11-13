@@ -56,6 +56,7 @@ final class ConstructorConfig
         public readonly int $cacheTtl = 600,
         /** @var array<string, int> Seconds per response type (categories, facets, collections). */
         public readonly array $cacheTtlOverrides = [],
+        public readonly string $imageSearchBaseUrl = 'https://image-search.cnstrc.com',
     ) {}
 
     /**
@@ -107,6 +108,10 @@ final class ConstructorConfig
             cachePrefix: self::stringOrNull($config['cache']['prefix'] ?? null) ?? 'constructor',
             cacheTtl: max(1, (int) ($config['cache']['ttl'] ?? 600)),
             cacheTtlOverrides: self::positiveIntegers($config['cache']['ttl_overrides'] ?? []),
+            imageSearchBaseUrl: self::secureUrl(
+                'image_search_base_url',
+                $config['image_search_base_url'] ?? 'https://image-search.cnstrc.com',
+            ),
         );
     }
 

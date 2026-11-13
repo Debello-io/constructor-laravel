@@ -28,6 +28,17 @@ class OfflineApiClient extends ApiClient
         return [];
     }
 
+    public function postStorefront(
+        string $baseUrl,
+        string $path,
+        #[SensitiveParameter] string $body,
+        string $contentType,
+        array $query = [],
+        array $identity = [],
+    ): array {
+        return [];
+    }
+
     public function openStorefrontStream(#[SensitiveParameter] string $url): StreamInterface
     {
         return Utils::streamFor("event: end\ndata: {}\n\n");

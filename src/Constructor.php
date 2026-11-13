@@ -17,6 +17,8 @@ use ConstructorIO\Laravel\Services\RecommendationService;
 use ConstructorIO\Laravel\Services\SearchService;
 use ConstructorIO\Laravel\Support\RequestContext;
 use Illuminate\Http\Request;
+use SensitiveParameter;
+use SplFileInfo;
 
 /**
  * The package's entry point, and what the Constructor facade resolves to.
@@ -149,6 +151,29 @@ class Constructor implements SearchProvider
     public function naturalLanguageSearch(string $query, array $filters = [], array $options = []): SearchResults
     {
         return $this->search->naturalLanguageSearch($query, $filters, $options);
+    }
+
+    /**
+     * Products that look like a photo. $image is an UploadedFile, a trusted
+     * file (new SplFileInfo($path)) or the image bytes; a string is never read
+     * as a path. See SearchService::searchByImage().
+     *
+     * @param  array<string, mixed>  $options
+     */
+    public function searchByImage(#[SensitiveParameter] SplFileInfo|string $image, array $options = []): SearchResults
+    {
+        return $this->search->searchByImage($image, $options);
+    }
+
+    /**
+     * Narrow searchByImage() results with filters.
+     *
+     * @param  array<string, mixed>  $filters
+     * @param  array<string, mixed>  $options  See ParameterBuilder.
+     */
+    public function filterImageResults(SearchResults $imageResults, array $filters = [], array $options = []): SearchResults
+    {
+        return $this->search->filterImageResults($imageResults, $filters, $options);
     }
 
     public function browse(string $filterName, string $filterValue, array $filters = [], array $options = []): SearchResults

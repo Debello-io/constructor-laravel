@@ -10,6 +10,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - `Constructor::fake()`: a recording test fake. Nothing is sent and no credentials are needed; unstubbed calls return their normal empty result. Assertions: `assertSearched()`, `assertNotSearched()`, `assertBrowsed()`, `assertAutocompleted()`, `assertRecommended()`, `assertCalled()`, `assertNotCalled()`, `assertCalledTimes()`, `assertNothingCalled()`, plus `stub()` and `calls()`.
 - Opt-in response cache for non-personalized reads: `getBrowseGroups()`, `getAvailableFacets()`, `getFacetsWithOptions()`, `getFacetValuesWithImages()`, `getCollections()` and `getCollection()`. Settings under `constructor.cache` (`CONSTRUCTOR_CACHE_*`); `'cache' => false` skips it for one call; `Constructor::flushCache()` empties it on any cache store. Failures are never cached.
 - `getCollection()` and `getFacetValuesWithImages()` accept an `$options` array (currently just `cache`).
+- `searchByImage()` for Image Search (`POST /v2/image_search` on `image-search.cnstrc.com`): pass an uploaded file, a trusted `SplFileInfo` or the image bytes; JPEG, PNG, WebP or GIF up to 6 MB, checked from the contents before sending. Supports `use_segmentation`, `return_segments` and `search_crop_type`.
+- `filterImageResults()` to filter, sort and page image matches through `/browse/items`, as Constructor recommends.
+- `image_search_base_url` setting (`CONSTRUCTOR_IMAGE_SEARCH_BASE_URL`).
+- `ApiClient::postStorefront()` for storefront endpoints that take a raw request body.
 
 ## [2.0.0] - 2026-11-13
 

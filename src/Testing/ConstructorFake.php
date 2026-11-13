@@ -20,6 +20,8 @@ use ConstructorIO\Laravel\Services\SearchService;
 use Illuminate\Container\Container;
 use PHPUnit\Framework\Assert as PHPUnit;
 use ReflectionMethod;
+use SensitiveParameter;
+use SplFileInfo;
 
 /**
  * What the Constructor facade resolves to after Constructor::fake().
@@ -259,6 +261,16 @@ class ConstructorFake extends Constructor
     }
 
     public function naturalLanguageSearch(string $query, array $filters = [], array $options = []): SearchResults
+    {
+        return $this->record(__FUNCTION__, func_get_args());
+    }
+
+    public function searchByImage(#[SensitiveParameter] SplFileInfo|string $image, array $options = []): SearchResults
+    {
+        return $this->record(__FUNCTION__, func_get_args());
+    }
+
+    public function filterImageResults(SearchResults $imageResults, array $filters = [], array $options = []): SearchResults
     {
         return $this->record(__FUNCTION__, func_get_args());
     }

@@ -8,8 +8,10 @@ use ConstructorIO\Laravel\DataTransferObjects\RecommendationResults;
 use ConstructorIO\Laravel\DataTransferObjects\SearchResults;
 use ConstructorIO\Laravel\Exceptions\InvalidArgumentException;
 use ConstructorIO\Laravel\Facades\Constructor;
+use ConstructorIO\Laravel\Http\ApiClient;
 use ConstructorIO\Laravel\Services\AgentService;
 use ConstructorIO\Laravel\Testing\ConstructorFake;
+use ConstructorIO\Laravel\Testing\OfflineApiClient;
 use ConstructorIO\Laravel\Tests\TestCase;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Route;
@@ -190,6 +192,24 @@ class ConstructorFakeTest extends TestCase
         }
 
         $this->assertSame([], $unhandled, 'Add a one-line override to src/Testing/ConstructorFake.php for each of these Constructor methods.');
+    }
+
+    public function test_every_sending_api_client_method_is_offline_while_faked(): void
+    {
+        // ApiClient methods that don't send anything.
+        $doesNotSend = ['__construct', 'config', 'throwIfFailed', 'flushState'];
+        $sendsForReal = [];
+
+        foreach ((new ReflectionClass(ApiClient::class))->getMethods(ReflectionMethod::IS_PUBLIC) as $method) {
+            $name = $method->getName();
+            $offline = (new ReflectionMethod(OfflineApiClient::class, $name))->getDeclaringClass()->getName() === OfflineApiClient::class;
+
+            if (! $offline && ! in_array($name, $doesNotSend, true)) {
+                $sendsForReal[] = $name;
+            }
+        }
+
+        $this->assertSame([], $sendsForReal, 'Override these in src/Testing/OfflineApiClient.php, or a faked app would call Constructor for real.');
     }
 }
 
