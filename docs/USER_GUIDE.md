@@ -107,6 +107,7 @@ Constructor uses three different credentials. They are **not** interchangeable.
 | `CONSTRUCTOR_API_KEY` | Public index key (`key_...`) | Every request, as the `key` parameter |
 | `CONSTRUCTOR_API_TOKEN` | Secret API token from the dashboard (Integration > API Integration) | Only catalog management (uploads, `/v2/items`, tasks) and offline behavioral actions. Sent with HTTP Basic auth. |
 | `CONSTRUCTOR_BACKEND_TOKEN` | Secret backend **security token** that Constructor gives you | Search, browse, autocomplete, recommendations and agent requests, as the `x-cnstrc-token` header |
+| `CONSTRUCTOR_USER_PROFILE_TOKEN` | Optional. A dashboard API token with the `user_profile.user_preferences(w)` scope | Only shopper preferences, as a Bearer token. Empty means the API token is used. |
 
 The backend token is how Constructor recognises that requests from your server's IP are legitimate. Without it, Constructor is likely to throttle your traffic (HTTP 429), because thousands of shoppers appear to come from one IP address. Ask your Constructor contact for it.
 
@@ -710,6 +711,42 @@ foreach ($recentlyViewed->products as $product) {
 // At most 100 IDs per call (Constructor's limit). More throws
 // ConstructorIO\Laravel\Exceptions\InvalidArgumentException before any request is sent.
 ```
+
+### Badges and enriched attributes on a product page
+
+`browseItems()` returns a product's catalog data in the same shape as search results. Product details return something different: what Constructor has *added* to the product, from [Attribute Enrichment](https://docs.constructor.com/docs/products-attribute-enrichment-learn-about-attribute-enrichment) and [badges](https://docs.constructor.com/docs/products-attribute-enrichment-learn-about-badges-implement-badges). Badges must be enabled for your account by your Constructor contact.
+
+```php
+$details = Constructor::productDetails()->getItem($product->sku);
+```
+
+```blade
+@foreach ($details['badges'] ?? [] as $badge)
+    <span class="badge badge-{{ $badge['type'] }}">{{ $badge['display_name'] }}</span>
+@endforeach
+
+@foreach ($details['attribute_values'] ?? [] as $name => $values)
+    <dt>{{ Str::headline($name) }}</dt><dd>{{ implode(', ', $values) }}</dd>
+@endforeach
+```
+
+Each entry has:
+
+| Key | Meaning |
+|-----|---------|
+| `id` | The item ID (the variation ID for `getVariations()`) |
+| `variation_id` | The variation ID, or `null` for items |
+| `badges` | `type`, `display_name` (placeholders already filled in) and `metadata` (e.g. `times_was_bought_last_week => '63'`) |
+| `attributes` | Name → list of `['value' => ..., 'type' => ...]`, where type is `standard` or `extended`. `extended` values come from enrichment outside your own taxonomy. |
+| `attribute_values` | Name → list of values only, for display |
+| `_raw` | The entry as Constructor returned it |
+
+Details:
+
+- **Limits:** `getItems()` takes up to 20 IDs and `getVariations()` up to 100. More throws `InvalidArgumentException` before any request. Results come back in the order you asked, including repeated IDs.
+- **Options:** `section` (default `CONSTRUCTOR_SECTION`), `fields` (default and currently only `['enriched_attributes']`), plus the identity overrides.
+- **Failures:** like other storefront reads, a failure logs a warning and returns `[]` (or `null` from `getItem()`), unless `CONSTRUCTOR_THROW_EXCEPTIONS=true`.
+- **Listing pages:** badges come in each result's `labels`, so you don't need this service there.
 
 ### A category page controller
 
@@ -1486,6 +1523,46 @@ Constructor::behavior()->recordOfflinePurchases($sales->map(fn (Sale $sale) => [
 ])->all());
 ```
 
+### Shopper preferences
+
+Some things you know about a shopper last longer than a session: their preferred fuel type, the size of grill they cook on, their loyalty tier, answers to a "what do you cook?" survey. Constructor's [User profile API](https://docs.constructor.com/reference/user-profile-user-preferences) takes these as preferences and uses them for personalization, segmentation and experiments.
+
+```php
+// In a controller, after the shopper saves a preferences form:
+$saved = Constructor::preferences()->setForCurrentUser('fuel_type', $request->input('fuel_types'));
+```
+
+`setForCurrentUser()` sends the same `ui` as your storefront requests (`auth()->id()`, or your `resolveUserIdUsing()` resolver). It returns `false` and sends nothing when nobody is signed in or the shopper hasn't consented to personalization (`resolveConsentUsing()`, `CONSTRUCTOR_REQUIRE_CONSENT`).
+
+From jobs and commands:
+
+```php
+use ConstructorIO\Laravel\Facades\Constructor;
+
+// One preference for one user:
+Constructor::preferences()->setUserPreference($hashedUserId, 'loyalty_tier', 'gold');
+
+// Many at once: validated first, then sent 100 per request.
+Constructor::preferences()->setPreferences(
+    $customers->map(fn ($customer) => [
+        'user_id' => hash_hmac('sha256', (string) $customer->id, config('app.key')),
+        'preference_key' => 'loyalty_tier',
+        'preference_values' => [$customer->loyalty_tier],
+    ])->all()
+);
+
+// A full backfill: one {"preference_key", "preference_values", "ui"} object per line, optionally gzipped.
+Constructor::preferences()->uploadPreferencesFile(storage_path('exports/preferences.jsonl.gz'));
+```
+
+Things to get right:
+
+- **The token.** This API only accepts Bearer authentication, with a dashboard API token that has the `user_profile.user_preferences(w)` scope (Integration > API Integration > Add new). Set it as `CONSTRUCTOR_USER_PROFILE_TOKEN` so the token can't do anything else. If it's empty, `CONSTRUCTOR_API_TOKEN` is used, and that must then be a scoped token, not a legacy one. A missing scope gives a 403 `AuthenticationException`.
+- **The same `ui` everywhere.** Preferences only help if they're keyed by the exact `ui` your storefront sends. If `resolveUserIdUsing()` hashes IDs, hash them the same way in batch jobs, as in the example above.
+- **Personal data.** Only send preferences shoppers agreed you may use for personalization. The package never logs preference values. The API has no endpoint to read or delete preferences, so agree with Constructor how a deletion (right-to-erasure) request is handled.
+- **Session facts don't belong here.** For temporary facts such as campaign source or location, use the `user_segments` option on search, browse and recommendation calls.
+- **Failures.** Writes throw (`AuthenticationException`, `ApiException`, `ConnectionException`) and are never retried. If one batch fails, the earlier batches have already been saved.
+
 ---
 
 ## 12. Catalog management
@@ -2209,7 +2286,7 @@ Only failures that might succeed on a second try are retried: connection errors,
 | `CONSTRUCTOR_TIMEOUT` | 10 | Seconds for a normal request |
 | `CONSTRUCTOR_STREAM_TIMEOUT` | 120 | Total seconds for a streaming agent response, including keep-alive pings |
 
-`CONSTRUCTOR_SEARCH_BASE_URL`, `CONSTRUCTOR_AGENT_BASE_URL`, `CONSTRUCTOR_QUIZZES_BASE_URL` and `CONSTRUCTOR_CATALOG_BATCHING_BASE_URL` must use `https://`, because requests carry secret tokens. Plain `http://` is accepted only for `localhost` (for a local mock server); anything else throws `ConfigurationException`.
+`CONSTRUCTOR_SEARCH_BASE_URL`, `CONSTRUCTOR_AGENT_BASE_URL`, `CONSTRUCTOR_QUIZZES_BASE_URL`, `CONSTRUCTOR_CATALOG_BATCHING_BASE_URL`, `CONSTRUCTOR_PRODUCT_DETAILS_BASE_URL` and `CONSTRUCTOR_USER_PROFILE_BASE_URL` must use `https://`, because requests carry secret tokens. Plain `http://` is accepted only for `localhost` (for a local mock server); anything else throws `ConfigurationException`.
 
 ---
 

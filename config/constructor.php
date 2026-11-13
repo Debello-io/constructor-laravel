@@ -35,6 +35,15 @@ return [
     |                requests. Without it, requests from your servers are
     |                likely to be throttled. Ask your Constructor contact.
     |
+    | user_profile_token
+    |                Secret, optional. The User profile API (shopper
+    |                preferences) only accepts Bearer authentication with a
+    |                dashboard API token that has the
+    |                `user_profile.user_preferences(w)` scope. Leave empty to
+    |                use api_token (it must then be a scoped token, not a
+    |                legacy one); set it to use a separate, narrowly scoped
+    |                token, which is safer.
+    |
     | @see https://docs.constructor.com/reference/main-authentication
     | @see https://docs.constructor.com/docs/integrating-with-constructor-direct-api-integration-required-parameters
     |
@@ -45,6 +54,8 @@ return [
     'api_token' => env('CONSTRUCTOR_API_TOKEN'),
 
     'backend_token' => env('CONSTRUCTOR_BACKEND_TOKEN'),
+
+    'user_profile_token' => env('CONSTRUCTOR_USER_PROFILE_TOKEN'),
 
     /*
     |--------------------------------------------------------------------------
@@ -78,9 +89,15 @@ return [
     | catalog_batching_base_url
     |                   The Catalog Batching Service, for frequent small item
     |                   and variation updates such as price and stock.
+    | product_details_base_url
+    |                   Product details (enriched attributes and badges).
+    | user_profile_base_url
+    |                   The User profile API (shopper preferences).
     |
     | @see https://docs.constructor.com/reference/v1-quizzes-get-next-question
     | @see https://docs.constructor.com/reference/v2-batching-items-update-items
+    | @see https://docs.constructor.com/reference/v1-product-details-get-items
+    | @see https://docs.constructor.com/reference/v1-user-profile-create-preferences
     |
     */
 
@@ -91,6 +108,10 @@ return [
     'quizzes_base_url' => env('CONSTRUCTOR_QUIZZES_BASE_URL', 'https://quizzes.cnstrc.com'),
 
     'catalog_batching_base_url' => env('CONSTRUCTOR_CATALOG_BATCHING_BASE_URL', 'https://batching.catalog.cnstrc.com'),
+
+    'product_details_base_url' => env('CONSTRUCTOR_PRODUCT_DETAILS_BASE_URL', 'https://product-details.cnstrc.com'),
+
+    'user_profile_base_url' => env('CONSTRUCTOR_USER_PROFILE_BASE_URL', 'https://user-profile.cnstrc.com'),
 
     /*
     |--------------------------------------------------------------------------

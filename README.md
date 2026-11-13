@@ -58,6 +58,7 @@ CONSTRUCTOR_AGENT_DOMAIN=your-agent-domain
 | API key | Every request | `key` query parameter |
 | API token | Catalog management and offline behavioral actions only | HTTP Basic username |
 | Backend token | Storefront and agent requests | `x-cnstrc-token` header |
+| User profile token (optional) | Shopper preferences only. Defaults to the API token. | `Authorization: Bearer` header |
 
 See [Authentication](https://docs.constructor.com/reference/main-authentication) and [Required parameters](https://docs.constructor.com/docs/integrating-with-constructor-direct-api-integration-required-parameters).
 
@@ -192,6 +193,22 @@ $page = Constructor::getFacetsWithOptions(['page' => 1]);
 $page['facets']['brand']['options'];   // same shape as $results->facets
 $page['has_more'];
 ```
+
+### Product details (enriched attributes and badges)
+
+For a product page, Constructor can return what it has added to the product: [Attribute Enrichment](https://docs.constructor.com/docs/products-attribute-enrichment-learn-about-attribute-enrichment) results and badges such as "Bestseller" or "Bought 63 times last week".
+
+```php
+$details = Constructor::productDetails()->getItem('TRG-780');   // null if Constructor is unavailable
+
+$details['badges'];             // [['type' => 'is_global_bestseller', 'display_name' => 'Bestseller', 'metadata' => []]]
+$details['attribute_values'];   // ['fuel_type' => ['pellet'], 'color' => ['black']]
+
+$several = Constructor::productDetails()->getItems(['TRG-780', 'WEB-SPIRIT-E325']);   // up to 20, in order
+$variations = Constructor::productDetails()->getVariations(['TRG-780-BLK']);          // up to 100
+```
+
+This isn't the catalog record. Name, price and your own fields come from your database or from `browseItems()`, which returns products in the same shape as search results. Use product details only for Constructor's additions. Listing pages get badges in each result's `labels` instead. Requests go to `CONSTRUCTOR_PRODUCT_DETAILS_BASE_URL` (default `https://product-details.cnstrc.com`) with the shopper's identity, and fail gracefully like other storefront reads. See [Product details](https://docs.constructor.com/reference/v1-product-details-get-items).
 
 ### Autocomplete
 
@@ -390,6 +407,27 @@ Constructor::behavior()->recordOfflineReturns([[
 
 Actions are validated before anything is sent and posted in batches of 100 (Constructor's limit); writes are never retried. See [Offline behavioral actions](https://docs.constructor.com/reference/v1-offline-behavioral-actions-create-actions).
 
+### Shopper preferences
+
+Semi-permanent facts a shopper tells you (preferred fuel type, loyalty tier) improve personalization. Send them to Constructor's [User profile API](https://docs.constructor.com/reference/user-profile-user-preferences):
+
+```php
+// The signed-in shopper, e.g. after a preferences form. Uses the same `ui` as storefront
+// requests; returns false (and sends nothing) for guests or without consent.
+Constructor::preferences()->setForCurrentUser('fuel_type', ['pellet', 'charcoal']);
+
+// Back-office batches (100 per request) and full backfills (JSONL or .jsonl.gz):
+Constructor::preferences()->setPreferences([
+    ['user_id' => $hashedUserId, 'preference_key' => 'loyalty_tier', 'preference_values' => ['gold']],
+]);
+Constructor::preferences()->uploadPreferencesFile(storage_path('exports/preferences.jsonl.gz'));
+```
+
+- **Token:** this API only accepts Bearer authentication, with a dashboard API token that has the `user_profile.user_preferences(w)` scope. Set `CONSTRUCTOR_USER_PROFILE_TOKEN` to a separate, narrowly scoped token, or leave it empty to use `CONSTRUCTOR_API_TOKEN`. That must then be a scoped token, not a legacy one.
+- **Matching IDs:** `user_id` must be the exact `ui` your storefront sends. If you hash IDs with `resolveUserIdUsing()`, hash batch IDs the same way.
+- **Personal data:** only send what shoppers agreed you may use for personalization. Values are never logged. The API has no read or delete endpoint, so ask Constructor how to handle a deletion request.
+- **Temporary facts** (campaign, location) belong in the `user_segments` option on search calls instead.
+
 ### Laravel Scout
 
 ```env
@@ -490,6 +528,9 @@ Every setting is documented in [`config/constructor.php`](config/constructor.php
 | `CONSTRUCTOR_CATALOG_BATCHING_BASE_URL` | `https://batching.catalog.cnstrc.com` | Catalog Batching Service host |
 | `CONSTRUCTOR_SCOUT_SYNC_MODE` | `replace` | `replace` or `patch` model saves |
 | `CONSTRUCTOR_QUIZZES_BASE_URL` | `https://quizzes.cnstrc.com` | Quizzes host (https only) |
+| `CONSTRUCTOR_PRODUCT_DETAILS_BASE_URL` | `https://product-details.cnstrc.com` | Product details host |
+| `CONSTRUCTOR_USER_PROFILE_TOKEN` | API token | Bearer token for shopper preferences |
+| `CONSTRUCTOR_USER_PROFILE_BASE_URL` | `https://user-profile.cnstrc.com` | User profile host |
 
 ## Upgrading from 1.x
 

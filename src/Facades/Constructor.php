@@ -43,6 +43,8 @@ use Illuminate\Support\Facades\Facade;
  * @method static \ConstructorIO\Laravel\Services\CatalogBatchingService catalogBatching()
  * @method static \ConstructorIO\Laravel\Services\QuizService quizzes()
  * @method static \ConstructorIO\Laravel\Services\BehaviorService behavior()
+ * @method static \ConstructorIO\Laravel\Services\ProductDetailsService productDetails()
+ * @method static \ConstructorIO\Laravel\Services\PreferenceService preferences()
  * @method static void resolveUserIdUsing(\Closure|null $resolver)
  * @method static void resolveConsentUsing(\Closure|null $resolver)
  * @method static bool supportsZeroState()

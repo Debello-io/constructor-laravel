@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+- Product details: `Constructor::productDetails()` with `getItem()`, `getItems()` (up to 20) and `getVariations()` (up to 100), returning enriched attributes and badges from `product-details.cnstrc.com`.
+- Shopper preferences: `Constructor::preferences()` with `setForCurrentUser()` (respects consent and the storefront `ui`), `setUserPreference()`, `setPreferences()` (100 per request) and `uploadPreferencesFile()` for the User profile API.
+- Settings: `product_details_base_url`, `user_profile_base_url` and `user_profile_token` (Bearer token for preferences; defaults to `api_token`).
+
 ## [2.0.0] - 2026-11-13
 
 A full review against Constructor's API reference and backend-integration documentation. See [UPGRADE.md](UPGRADE.md).

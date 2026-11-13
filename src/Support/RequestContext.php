@@ -212,6 +212,16 @@ class RequestContext
     }
 
     /**
+     * Whether the current shopper may be personalized: the consent resolver's
+     * answer, or (without one) true unless identity.require_consent is set.
+     * The same rule that decides whether `i` is sent.
+     */
+    public function hasPersonalizationConsent(): bool
+    {
+        return $this->hasConsent($this->request());
+    }
+
+    /**
      * The shopper's IP address. A single address, never a comma-separated chain.
      *
      * Uses Laravel's Request::ip(), which honours your TrustProxies
