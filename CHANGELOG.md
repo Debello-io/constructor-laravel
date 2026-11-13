@@ -42,6 +42,9 @@ A full review against Constructor's API reference and backend-integration docume
 - `catalog.batch_size`, `scout.sync_mode` (replace or patch), `identity.require_consent`.
 - `naturalLanguageSearch()` for voice and conversational queries (`/v1/search/natural_language/{query}`), returning `SearchResults`.
 - `getFacetsWithOptions()` for facets and their options without a search (`/browse/facets_with_options`), paged at up to 10 facets per request.
+- Variations API: `upsertVariations()`, `patchVariations()`, `deleteVariations()`, `getVariation()`, `listVariations()` (`/v2/variations`).
+- Item groups (categories) API: `upsertItemGroups()`, `patchItemGroups()`, `deleteItemGroups()`, `getItemGroup()`, `listItemGroups()` (`/v2/item_groups`).
+- Catalog Batching Service for frequent small updates: `Constructor::catalogBatching()` with `patchItems()`, `deleteItems()`, `patchVariations()`, `deleteVariations()`, and the `catalog_batching_base_url` setting.
 - Test suite (PHPUnit + Testbench), Pint, Larastan and GitHub Actions CI.
 - `AGENTS.md`, `CLAUDE.md`, the Constructor docs MCP server, Claude Code skills, a review subagent, CONTRIBUTING and SECURITY.
 - Laravel 13 support. The Scout engine requires Scout 11.

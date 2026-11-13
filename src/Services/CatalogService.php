@@ -9,12 +9,15 @@ use ConstructorIO\Laravel\Exceptions\InvalidCatalogDataException;
 use ConstructorIO\Laravel\Exceptions\TaskTimeoutException;
 use ConstructorIO\Laravel\Http\ApiClient;
 use ConstructorIO\Laravel\Http\Path;
+use ConstructorIO\Laravel\Support\CatalogRecords;
 use ConstructorIO\Laravel\Support\ConstructorConfig;
+use Illuminate\Support\Arr;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Sleep;
 
 /**
- * Catalog management: file uploads, item updates and background tasks.
+ * Catalog management: file uploads, items, variations, item groups
+ * (categories) and background tasks.
  *
  * Every call here is a private endpoint, authenticated with your API token
  * (CONSTRUCTOR_API_TOKEN) as the HTTP Basic username and an empty password.
@@ -29,6 +32,11 @@ use Illuminate\Support\Sleep;
  *     $task = $catalog->waitForTaskCompletion($upload['task_id']);
  *
  *     $catalog->patchItems([['id' => 'GRILL-123', 'data' => ['price' => 899.00]]]);
+ *     $catalog->upsertVariations([['id' => 'GRILL-123-BLK', 'item_id' => 'GRILL-123', 'color' => 'Black']]);
+ *     $catalog->upsertItemGroups([['id' => 'pellet-grills', 'name' => 'Pellet Grills', 'parent_ids' => ['grills']]]);
+ *
+ * For frequent small updates (price, stock) without a task per change, see
+ * CatalogBatchingService.
  *
  * @see https://docs.constructor.com/reference/main-authentication
  * @see https://docs.constructor.com/reference/v1-catalog-create-or-replace-catalog
@@ -41,14 +49,17 @@ class CatalogService
     /** Replace only the records in the uploaded files (PATCH /v1/catalog). */
     public const OPERATION_PATCH = 'patch';
 
-    /** Constructor accepts at most this many items per /v2/items request. */
+    /**
+     * Constructor accepts at most this many records per /v2/items,
+     * /v2/variations or /v2/item_groups request.
+     */
     public const MAX_ITEMS_PER_REQUEST = 10000;
+
+    /** Largest page the /v2 list endpoints return. */
+    private const MAX_LIST_PAGE_SIZE = 1000;
 
     /** Task statuses after which a task will not change again. */
     private const FINISHED_TASK_STATUSES = ['DONE', 'FAILED', 'CANCELED'];
-
-    /** Fields allowed at the top level of an item; everything else belongs in `data`. */
-    private const ITEM_TOP_LEVEL_FIELDS = ['id', 'name', 'suggested_score', 'data'];
 
     protected readonly ConstructorConfig $config;
 
@@ -226,12 +237,7 @@ class CatalogService
      */
     public function deleteItems(array $itemIds, ?string $section = null, array $options = []): array
     {
-        $items = array_map(
-            fn (string|int $id) => ['id' => (string) $id],
-            array_values(array_filter($itemIds, fn (string|int $id) => $id !== '')),
-        );
-
-        return $this->sendInBatches('DELETE', $items, $this->writeParameters($section, $options));
+        return $this->sendInBatches('DELETE', CatalogRecords::ids($itemIds), $this->writeParameters($section, $options));
     }
 
     /**
@@ -245,17 +251,9 @@ class CatalogService
      */
     public function getItem(string $itemId, ?string $section = null): ?array
     {
-        try {
-            return $this->api->catalog('GET', '/v2/items/'.Path::segment($itemId), [
-                'section' => $section ?? $this->config->defaultSection,
-            ]);
-        } catch (ApiException $e) {
-            if ($e->getStatusCode() === 404) {
-                return null;
-            }
-
-            throw $e;
-        }
+        return $this->findOrNull('/v2/items/'.Path::segment($itemId), [
+            'section' => $section ?? $this->config->defaultSection,
+        ]);
     }
 
     /**
@@ -273,16 +271,9 @@ class CatalogService
      */
     public function listItems(?string $section = null, array $options = []): array
     {
-        $parameters = array_filter([
+        $response = $this->api->catalog('GET', '/v2/items', $this->listParameters($options, [
             'section' => $section ?? $this->config->defaultSection,
-            'id' => isset($options['ids']) ? array_values(array_map('strval', (array) $options['ids'])) : null,
-            'num_results_per_page' => isset($options['per_page']) ? min(1000, max(1, (int) $options['per_page'])) : null,
-            'next_page_cursor' => $options['next_page_cursor'] ?? null,
-            // page and cursor can't be combined.
-            'page' => isset($options['next_page_cursor']) ? null : ($options['page'] ?? null),
-        ], fn ($value) => $value !== null);
-
-        $response = $this->api->catalog('GET', '/v2/items', $parameters);
+        ]));
 
         return [
             'items' => $response['items'] ?? [],
@@ -290,6 +281,260 @@ class CatalogService
             'next_page_cursor' => $response['next_page_cursor'] ?? null,
         ];
     }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Variations
+    |--------------------------------------------------------------------------
+    |
+    | Variations are the purchasable versions of an item (sizes, colors,
+    | fuel types). Each one belongs to an item through `item_id`.
+    |
+    */
+
+    /**
+     * Create variations, or replace existing variations completely (PUT /v2/variations).
+     *
+     * Each variation needs an `id` and the `item_id` of its parent item;
+     * `name` is optional. Any other fields are moved into `data`:
+     *
+     *     ['id' => 'GRILL-123-LP', 'item_id' => 'GRILL-123', 'fuel_type' => 'Propane', 'price' => 899]
+     *
+     * Large lists are split into batches (CONSTRUCTOR_CATALOG_BATCH_SIZE, at most 10,000).
+     *
+     * Options: force, notification_email.
+     *
+     * @param  list<array<string, mixed>>  $variations
+     * @param  array<string, mixed>  $options
+     * @return list<array{task_id: int|null, task_status_path: string|null, message: string|null, response: array<string, mixed>}> One entry per batch.
+     *
+     * @throws InvalidCatalogDataException|ApiException
+     *
+     * @see https://docs.constructor.com/reference/v2-variations-create-or-replace-variations
+     */
+    public function upsertVariations(array $variations, ?string $section = null, array $options = []): array
+    {
+        $variations = array_map(fn (array $variation) => CatalogRecords::variation($variation), $variations);
+
+        return $this->sendInBatches('PUT', $variations, $this->writeParameters($section, $options), 'variations');
+    }
+
+    /**
+     * Update fields of existing variations (PATCH /v2/variations). Only `id`
+     * is required; the data you send is merged into the existing variation.
+     *
+     * Options: force, notification_email, on_missing ('FAIL' default, 'IGNORE', 'CREATE').
+     * Variations created through 'CREATE' still need an `item_id`.
+     *
+     * @param  list<array<string, mixed>>  $variations
+     * @param  array<string, mixed>  $options
+     * @return list<array{task_id: int|null, task_status_path: string|null, message: string|null, response: array<string, mixed>}>
+     *
+     * @throws InvalidCatalogDataException|ApiException
+     *
+     * @see https://docs.constructor.com/reference/v2-variations-update-variations
+     */
+    public function patchVariations(array $variations, ?string $section = null, array $options = []): array
+    {
+        $variations = array_map(fn (array $variation) => CatalogRecords::variation($variation, requireItemId: false), $variations);
+
+        $parameters = $this->writeParameters($section, $options);
+        if (isset($options['on_missing'])) {
+            $parameters['on_missing'] = strtoupper((string) $options['on_missing']);
+        }
+
+        return $this->sendInBatches('PATCH', $variations, $parameters, 'variations');
+    }
+
+    /**
+     * Delete variations by ID (DELETE /v2/variations). Their parent items stay.
+     *
+     * Options: force, notification_email.
+     *
+     * @param  list<string|int>  $variationIds
+     * @param  array<string, mixed>  $options
+     * @return list<array{task_id: int|null, task_status_path: string|null, message: string|null, response: array<string, mixed>}>
+     *
+     * @throws ApiException
+     *
+     * @see https://docs.constructor.com/reference/v2-variations-delete-variations
+     */
+    public function deleteVariations(array $variationIds, ?string $section = null, array $options = []): array
+    {
+        return $this->sendInBatches('DELETE', CatalogRecords::ids($variationIds), $this->writeParameters($section, $options), 'variations');
+    }
+
+    /**
+     * One variation as stored in the catalog, or null if it doesn't exist.
+     *
+     * @return array<string, mixed>|null
+     *
+     * @throws ApiException
+     *
+     * @see https://docs.constructor.com/reference/v2-variations-retrieve-variation
+     */
+    public function getVariation(string $variationId, ?string $section = null): ?array
+    {
+        return $this->findOrNull('/v2/variations/'.Path::segment($variationId), [
+            'section' => $section ?? $this->config->defaultSection,
+        ]);
+    }
+
+    /**
+     * Variations as stored in the catalog, a page at a time.
+     *
+     * Options: ids (variation IDs, up to 1,000), item_ids (every variation of
+     * these items, up to 1,000), page, per_page (1-1,000, default 100),
+     * next_page_cursor (for walking very large catalogs; omits total_count).
+     *
+     *     $catalog->listVariations(null, ['item_ids' => ['GRILL-123']]);
+     *
+     * @param  array<string, mixed>  $options
+     * @return array{variations: list<array<string, mixed>>, total_count: int|null, next_page_cursor: string|null}
+     *
+     * @throws ApiException
+     *
+     * @see https://docs.constructor.com/reference/v2-variations-retrieve-variations
+     */
+    public function listVariations(?string $section = null, array $options = []): array
+    {
+        $response = $this->api->catalog('GET', '/v2/variations', $this->listParameters($options, [
+            'section' => $section ?? $this->config->defaultSection,
+            'item_id' => isset($options['item_ids']) ? array_values(array_map('strval', (array) $options['item_ids'])) : null,
+        ]));
+
+        return [
+            'variations' => $response['variations'] ?? [],
+            'total_count' => isset($response['total_count']) ? (int) $response['total_count'] : null,
+            'next_page_cursor' => $response['next_page_cursor'] ?? null,
+        ];
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Item groups (categories)
+    |--------------------------------------------------------------------------
+    |
+    | Item groups form the category tree. Items join a group through
+    | `data.group_ids`, and category pages browse by the group's ID:
+    | Constructor::browse('group_id', 'pellet-grills'). Item groups belong to
+    | the whole index, so these calls take no section.
+    |
+    */
+
+    /**
+     * Create item groups, or replace existing ones completely (PUT /v2/item_groups).
+     *
+     * Each group needs an `id` and a `name`. `parent_ids` places it in the
+     * tree; any other fields are moved into `data` (at most 5 kB per group):
+     *
+     *     ['id' => 'pellet-grills', 'name' => 'Pellet Grills', 'parent_ids' => ['grills'], 'image_url' => '/img/pellet.jpg']
+     *
+     * Large lists are split into batches (CONSTRUCTOR_CATALOG_BATCH_SIZE, at most 10,000).
+     *
+     * Options: force, notification_email.
+     *
+     * @param  list<array<string, mixed>>  $itemGroups
+     * @param  array<string, mixed>  $options
+     * @return list<array{task_id: int|null, task_status_path: string|null, message: string|null, response: array<string, mixed>}> One entry per batch.
+     *
+     * @throws InvalidCatalogDataException|ApiException
+     *
+     * @see https://docs.constructor.com/reference/v2-item-groups-create-or-replace-item-groups
+     */
+    public function upsertItemGroups(array $itemGroups, array $options = []): array
+    {
+        $itemGroups = array_map(fn (array $group) => CatalogRecords::itemGroup($group), $itemGroups);
+
+        return $this->sendInBatches('PUT', $itemGroups, $this->itemGroupWriteParameters($options), 'item_groups');
+    }
+
+    /**
+     * Update fields of existing item groups (PATCH /v2/item_groups). Only
+     * `id` is required; the data you send is merged into the existing group.
+     *
+     * Unlike items and variations, this can't create groups: Constructor
+     * always fails the task if a group doesn't exist (it accepts no
+     * `on_missing`). Use upsertItemGroups() to create them.
+     *
+     * Options: force, notification_email.
+     *
+     * @param  list<array<string, mixed>>  $itemGroups
+     * @param  array<string, mixed>  $options
+     * @return list<array{task_id: int|null, task_status_path: string|null, message: string|null, response: array<string, mixed>}>
+     *
+     * @throws InvalidCatalogDataException|ApiException
+     *
+     * @see https://docs.constructor.com/reference/v2-item-groups-update-item-groups
+     */
+    public function patchItemGroups(array $itemGroups, array $options = []): array
+    {
+        $itemGroups = array_map(fn (array $group) => CatalogRecords::itemGroup($group, requireName: false), $itemGroups);
+
+        return $this->sendInBatches('PATCH', $itemGroups, $this->itemGroupWriteParameters($options), 'item_groups');
+    }
+
+    /**
+     * Delete item groups by ID (DELETE /v2/item_groups).
+     *
+     * Options: force, notification_email.
+     *
+     * @param  list<string|int>  $itemGroupIds
+     * @param  array<string, mixed>  $options
+     * @return list<array{task_id: int|null, task_status_path: string|null, message: string|null, response: array<string, mixed>}>
+     *
+     * @throws ApiException
+     *
+     * @see https://docs.constructor.com/reference/v2-item-groups-delete-item-groups
+     */
+    public function deleteItemGroups(array $itemGroupIds, array $options = []): array
+    {
+        return $this->sendInBatches('DELETE', CatalogRecords::ids($itemGroupIds), $this->itemGroupWriteParameters($options), 'item_groups');
+    }
+
+    /**
+     * One item group as stored in the catalog (`id`, `name`, `parent_ids`,
+     * `data`), or null if it doesn't exist.
+     *
+     * @return array<string, mixed>|null
+     *
+     * @throws ApiException
+     *
+     * @see https://docs.constructor.com/reference/v2-item-groups-retrieve-item-group
+     */
+    public function getItemGroup(string $itemGroupId): ?array
+    {
+        return $this->findOrNull('/v2/item_groups/'.Path::segment($itemGroupId));
+    }
+
+    /**
+     * Item groups as stored in the catalog, a page at a time.
+     *
+     * Options: ids (up to 1,000), page, per_page (1-1,000; Constructor's
+     * default is 20). This endpoint has no cursor pagination.
+     *
+     * @param  array<string, mixed>  $options
+     * @return array{item_groups: list<array<string, mixed>>, total_count: int|null}
+     *
+     * @throws ApiException
+     *
+     * @see https://docs.constructor.com/reference/v2-item-groups-retrieve-item-groups
+     */
+    public function listItemGroups(array $options = []): array
+    {
+        $response = $this->api->catalog('GET', '/v2/item_groups', $this->listParameters(Arr::except($options, 'next_page_cursor')));
+
+        return [
+            'item_groups' => $response['item_groups'] ?? [],
+            'total_count' => isset($response['total_count']) ? (int) $response['total_count'] : null,
+        ];
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Background tasks
+    |--------------------------------------------------------------------------
+    */
 
     /**
      * Current state of a background task.
@@ -368,8 +613,8 @@ class CatalogService
     }
 
     /**
-     * Items sent per /v2/items request (CONSTRUCTOR_CATALOG_BATCH_SIZE,
-     * capped at the API's limit of 10,000).
+     * Records sent per /v2/items, /v2/variations or /v2/item_groups request
+     * (CONSTRUCTOR_CATALOG_BATCH_SIZE, capped at the API's limit of 10,000).
      */
     public function batchSize(): int
     {
@@ -395,40 +640,27 @@ class CatalogService
      */
     public function normalizeItem(array $item, bool $requireName = true): array
     {
-        $id = isset($item['id']) ? trim((string) $item['id']) : '';
-        if ($id === '') {
-            throw new InvalidCatalogDataException('Every catalog item needs a non-empty "id".');
-        }
-
-        $name = isset($item['name']) ? trim((string) $item['name']) : '';
-        if ($requireName && $name === '') {
-            throw new InvalidCatalogDataException("Catalog item \"{$id}\" needs a non-empty \"name\".");
-        }
-
-        $extraFields = array_diff_key($item, array_flip(self::ITEM_TOP_LEVEL_FIELDS));
-        $data = array_merge($extraFields, (array) ($item['data'] ?? []));
-
-        return array_filter([
-            'id' => $id,
-            'name' => $name === '' ? null : $name,
-            'suggested_score' => isset($item['suggested_score']) ? (int) $item['suggested_score'] : null,
-            'data' => $data === [] ? null : $data,
-        ], fn ($value) => $value !== null);
+        return CatalogRecords::item($item, $requireName);
     }
 
     /**
-     * Send items to /v2/items in batches the API accepts.
+     * Send records to /v2/{resource} in batches the API accepts. Each batch
+     * starts its own task.
      *
-     * @param  list<array<string, mixed>>  $items
+     * If a batch fails, its exception is thrown and later batches aren't
+     * sent; earlier batches have already been accepted.
+     *
+     * @param  list<array<string, mixed>>  $records
      * @param  array<string, mixed>  $parameters
+     * @param  'items'|'variations'|'item_groups'  $resource  Both the path segment and the request body key.
      * @return list<array{task_id: int|null, task_status_path: string|null, message: string|null, response: array<string, mixed>}>
      */
-    protected function sendInBatches(string $method, array $items, array $parameters): array
+    protected function sendInBatches(string $method, array $records, array $parameters, string $resource = 'items'): array
     {
         $results = [];
 
-        foreach (array_chunk($items, $this->batchSize()) as $batch) {
-            $response = $this->api->catalog($method, '/v2/items', $parameters, ['items' => $batch]);
+        foreach (array_chunk($records, $this->batchSize()) as $batch) {
+            $response = $this->api->catalog($method, '/v2/'.$resource, $parameters, [$resource => $batch]);
             $results[] = $this->normalizeTaskResponse($response);
         }
 
@@ -448,6 +680,58 @@ class CatalogService
             'force' => (bool) ($options['force'] ?? $this->config->forceUpload),
             'notification_email' => $this->notificationEmails($options),
         ];
+    }
+
+    /**
+     * Item groups belong to the whole index, so their writes take no `section`.
+     *
+     * @param  array<string, mixed>  $options
+     * @return array<string, mixed>
+     */
+    protected function itemGroupWriteParameters(array $options): array
+    {
+        return Arr::except($this->writeParameters(null, $options), 'section');
+    }
+
+    /**
+     * Query parameters shared by the /v2 list endpoints.
+     *
+     * @param  array<string, mixed>  $options  ids, page, per_page, next_page_cursor
+     * @param  array<string, mixed>  $extra  Endpoint-specific parameters; nulls are dropped.
+     * @return array<string, mixed>
+     */
+    protected function listParameters(array $options, array $extra = []): array
+    {
+        return array_filter(array_merge($extra, [
+            'id' => isset($options['ids']) ? array_values(array_map('strval', (array) $options['ids'])) : null,
+            'num_results_per_page' => isset($options['per_page'])
+                ? min(self::MAX_LIST_PAGE_SIZE, max(1, (int) $options['per_page']))
+                : null,
+            'next_page_cursor' => $options['next_page_cursor'] ?? null,
+            // page and cursor can't be combined.
+            'page' => isset($options['next_page_cursor']) ? null : ($options['page'] ?? null),
+        ]), fn ($value) => $value !== null);
+    }
+
+    /**
+     * GET one catalog record, or null if Constructor answers 404.
+     *
+     * @param  array<string, mixed>  $query
+     * @return array<string, mixed>|null
+     *
+     * @throws ApiException For any other error status.
+     */
+    protected function findOrNull(string $path, array $query = []): ?array
+    {
+        try {
+            return $this->api->catalog('GET', $path, $query);
+        } catch (ApiException $e) {
+            if ($e->getStatusCode() === 404) {
+                return null;
+            }
+
+            throw $e;
+        }
     }
 
     /**

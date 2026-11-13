@@ -28,7 +28,8 @@ use Throwable;
  *               Public (no API token). Must carry the shopper's identity and
  *               the backend security token. See RequestContext.
  *
- *   Catalog     items, catalog uploads, tasks. Private. Authenticated with
+ *   Catalog     items, variations, item groups, catalog uploads, tasks and
+ *               the Catalog Batching Service. Private. Authenticated with
  *               the API token as the HTTP Basic username, no password.
  *
  * Every response goes through throwIfFailed(), so callers get the same typed
@@ -140,11 +141,12 @@ class ApiClient
      *
      * @param  array<string, mixed>  $query
      * @param  array<string, mixed>|null  $json  Request body, sent as JSON.
+     * @param  string|null  $baseUrl  Defaults to the search host; pass the Catalog Batching Service host for its endpoints.
      * @return array<string, mixed>
      */
-    public function catalog(string $method, string $path, array $query = [], ?array $json = null): array
+    public function catalog(string $method, string $path, array $query = [], ?array $json = null, ?string $baseUrl = null): array
     {
-        $url = $this->catalogUrl($path, $query);
+        $url = $this->catalogUrl($path, $query, $baseUrl);
         $retry = strtoupper($method) === 'GET';
 
         return $this->send(function () use ($method, $url, $json, $retry) {
@@ -181,15 +183,16 @@ class ApiClient
      * Build a catalog URL with `key` and `c` added.
      *
      * @param  array<string, mixed>  $query
+     * @param  string|null  $baseUrl  Defaults to the search host.
      */
-    public function catalogUrl(string $path, array $query = []): string
+    public function catalogUrl(string $path, array $query = [], ?string $baseUrl = null): string
     {
         $parameters = array_merge(
             $query,
             ['key' => $this->config->requireApiKey(), 'c' => $this->config->clientIdentifier],
         );
 
-        return $this->config->searchBaseUrl.$path.'?'.QueryString::build($parameters);
+        return ($baseUrl ?? $this->config->searchBaseUrl).$path.'?'.QueryString::build($parameters);
     }
 
     /*
