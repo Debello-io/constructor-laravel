@@ -225,6 +225,22 @@ $accessories->products;
 
 Pod-specific parameters are supported: `term` (query recommendations), `filters` (filtered items), `variation_id`. See [Recommendations](https://docs.constructor.com/reference/v1-recommendations-get-pod-results).
 
+Fetch every pod on a dashboard-configured page in one request. Constructor removes duplicates across the pods. This endpoint is in beta, so ask Constructor to enable it.
+
+```php
+$page = Constructor::getRecommendationPage('pdp', [
+    'item_id' => 'TRG-780',                                       // shared by every pod
+    'pod_overrides' => ['pdp-similar' => ['num_results' => 12]],  // per-pod settings
+]);
+
+foreach ($page->podsWithResults() as $pod) {   // in the page's configured order
+    $pod->title;  $pod->products;  $pod->resultId;   // track each pod with its own resultId
+}
+$page->pod('pdp-complementary');
+```
+
+See [Retrieve by page](https://docs.constructor.com/reference/v1-recommendations-get-page-results) and the [User Guide](docs/USER_GUIDE.md#every-pod-on-a-page-in-one-request) for the tracking markup.
+
 ### AI Shopping Agent
 
 ```php
