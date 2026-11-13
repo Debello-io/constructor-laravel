@@ -2215,9 +2215,73 @@ Only failures that might succeed on a second try are retried: connection errors,
 
 ## 18. Testing your integration
 
+### Fake Constructor
+
+`Constructor::fake()` swaps the client for a recording fake. Nothing is sent to Constructor and no credentials are needed, so it works in CI as is:
+
+```php
+use ConstructorIO\Laravel\DataTransferObjects\SearchResults;
+use ConstructorIO\Laravel\Facades\Constructor;
+
+public function test_search_page_lists_products(): void
+{
+    Constructor::fake([
+        'search' => new SearchResults(
+            products: [['id' => 'SMK-1', 'name' => 'Offset Smoker', 'url' => '/p/smk-1', 'image_url' => null, 'price' => 499]],
+            total: 1,
+            page: 1,
+            perPage: 24,
+            resultId: 'test-result',
+        ),
+    ]);
+
+    $this->get('/search?q=smoker')->assertOk()->assertSee('Offset Smoker');
+
+    Constructor::assertSearched('smoker');
+}
+```
+
+**Stubs** are keyed by method name. A stub is either the value to return or a Closure that receives the call's arguments, with defaults filled in:
+
+```php
+Constructor::fake([
+    'getRecommendations' => fn (string $podId, array $options) => $podId === 'pdp-similar' ? $similar : RecommendationResults::empty($podId),
+]);
+
+// Or later in the test:
+Constructor::stub('getCollection', ['id' => 'summer-cookout', 'name' => 'Summer Cookout']);
+```
+
+A method you don't stub runs the real code against an offline client, so it returns its normal empty result (an empty `SearchResults`, `[]` or `null`) and still rejects bad arguments (for example more than 100 IDs for `browseItems()`).
+
+**Assertions:**
+
+| Assertion | Passes when |
+|-----------|-------------|
+| `assertSearched($query = null)` | `search()` ran, for any query, this query, or a call your Closure accepts (`$query, $filters, $options`) |
+| `assertNotSearched($query = null)` | The opposite |
+| `assertBrowsed($filterName = null, $filterValue = null)` | `browse()` ran, e.g. `assertBrowsed('group_id', 'gas-grills')`, or a Closure (`$filterName, $filterValue, $filters, $options`) |
+| `assertAutocompleted($query = null)` | `autocomplete()` ran |
+| `assertRecommended($podId = null)` | `getRecommendations()` or `getItemRecommendations()` asked for the pod. A Closure receives `$podId, $options, $itemId` |
+| `assertCalled($method, $callback = null)` / `assertNotCalled(...)` | Any method, with an optional Closure over its arguments |
+| `assertCalledTimes($method, $times)` | Exactly that many calls |
+| `assertNothingCalled()` | No Constructor calls at all |
+
+`Constructor::calls()` (or `calls('search')`) returns the recorded calls for your own checks.
+
+**Services.** `Constructor::agent()`, `catalog()`, `catalogBatching()`, `quizzes()`, `behavior()`, `recommendations()` and `searchService()` return the real services wired to the offline client: they never reach the network, catalog writes are accepted, and tasks report DONE at once. To return specific data, mock the service; the accessor returns your mock:
+
+```php
+$this->mock(AgentService::class, fn ($mock) => $mock
+    ->shouldReceive('getProductQuestions')
+    ->andReturn(['questions' => ['Can it cold smoke?'], '_raw' => []]));
+```
+
+Classes that type-hint `ConstructorIO\Laravel\Constructor` or `SearchProvider` receive the fake too.
+
 ### Mock the facade
 
-For controller and feature tests, mock the facade and return DTOs:
+You can also mock the facade with Mockery and return DTOs:
 
 ```php
 use ConstructorIO\Laravel\DataTransferObjects\SearchResults;

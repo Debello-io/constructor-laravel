@@ -453,18 +453,29 @@ Only reads are retried, and only after connection errors, 429 and 5xx responses,
 
 ## Testing your app
 
-Mock the facade:
+Fake Constructor. Nothing is sent and no credentials are needed; calls are recorded, and anything you don't stub returns an empty result:
 
 ```php
+use ConstructorIO\Laravel\DataTransferObjects\RecommendationResults;
 use ConstructorIO\Laravel\DataTransferObjects\SearchResults;
 use ConstructorIO\Laravel\Facades\Constructor;
 
-Constructor::shouldReceive('search')->andReturn(new SearchResults(
-    products: [['id' => 'TRG-780', 'name' => 'Pro 780']], total: 1, page: 1, perPage: 24,
-));
+Constructor::fake([
+    'search' => new SearchResults(products: [['id' => 'TRG-780', 'name' => 'Pro 780']], total: 1, page: 1, perPage: 24),
+    'getRecommendations' => fn (string $podId, array $options) => RecommendationResults::empty($podId),
+]);
+
+$this->get('/search?q=grill')->assertSee('Pro 780');
+
+Constructor::assertSearched('grill');
+Constructor::assertSearched(fn (string $query, array $filters, array $options) => $filters === ['brand' => 'Weber']);
+Constructor::assertBrowsed('group_id', 'gas-grills');
+Constructor::assertRecommended('pdp-similar');
+Constructor::assertCalled('getCollection', fn (string $id) => $id === 'summer-cookout');
+Constructor::assertNothingCalled();
 ```
 
-Or fake the HTTP layer with `Http::fake(['ac.cnstrc.com/*' => Http::response([...])])`.
+The services behind `Constructor::agent()`, `catalog()`, `quizzes()` and the other accessors also stay offline. To make one return specific data, mock it: `$this->mock(AgentService::class, ...)`. Mocking the facade with `Constructor::shouldReceive(...)` works as well.
 
 ## Configuration reference
 

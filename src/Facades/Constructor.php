@@ -2,7 +2,10 @@
 
 namespace ConstructorIO\Laravel\Facades;
 
+use ConstructorIO\Laravel\Testing\ConstructorFake;
+use Illuminate\Container\Container;
 use Illuminate\Support\Facades\Facade;
+use RuntimeException;
 
 /**
  * Static access to \ConstructorIO\Laravel\Constructor.
@@ -11,9 +14,14 @@ use Illuminate\Support\Facades\Facade;
  *
  *     $results = Constructor::search('smoker');
  *
- * In tests, mock it like any facade:
+ * In tests, fake it: nothing is sent to Constructor, calls are recorded,
+ * and unstubbed calls return empty results.
  *
- *     Constructor::shouldReceive('search')->andReturn(SearchResults::empty());
+ *     Constructor::fake(['search' => $results]);
+ *     // ... exercise your app ...
+ *     Constructor::assertSearched('grill');
+ *
+ * Mocking works too: Constructor::shouldReceive('search')->andReturn(...).
  *
  * @method static \ConstructorIO\Laravel\DataTransferObjects\SearchResults search(string $query, array<string, mixed> $filters = [], array<string, mixed> $options = [])
  * @method static \ConstructorIO\Laravel\DataTransferObjects\SearchResults naturalLanguageSearch(string $query, array<string, mixed> $filters = [], array<string, mixed> $options = [])
@@ -51,11 +59,47 @@ use Illuminate\Support\Facades\Facade;
  * @method static bool supportsCollections()
  * @method static bool supportsRecipes()
  * @method static string getProviderName()
+ * @method static \ConstructorIO\Laravel\Testing\ConstructorFake stub(string $method, mixed $response)
+ * @method static list<array{method: string, arguments: list<mixed>}> calls(string|null $method = null)
+ * @method static void assertCalled(string $method, \Closure|null $callback = null)
+ * @method static void assertNotCalled(string $method, \Closure|null $callback = null)
+ * @method static void assertCalledTimes(string $method, int $times)
+ * @method static void assertNothingCalled()
+ * @method static void assertSearched(string|\Closure|null $query = null)
+ * @method static void assertNotSearched(string|\Closure|null $query = null)
+ * @method static void assertBrowsed(string|\Closure|null $filterName = null, string|null $filterValue = null)
+ * @method static void assertAutocompleted(string|\Closure|null $query = null)
+ * @method static void assertRecommended(string|\Closure|null $podId = null)
  *
  * @see \ConstructorIO\Laravel\Constructor
  */
 class Constructor extends Facade
 {
+    /**
+     * Replace Constructor with a recording fake for the rest of the test.
+     *
+     * Nothing is sent to Constructor and no credentials are needed. Stubs are
+     * keyed by method name; each is a return value or a Closure that receives
+     * the call's arguments. Unstubbed calls return the method's normal empty
+     * result. The assert* methods (assertSearched(), assertCalled(), ...)
+     * become available on the facade.
+     *
+     * @param  array<string, mixed>  $stubs  e.g. ['search' => $results, 'getRecommendations' => fn (string $podId) => ...]
+     */
+    public static function fake(array $stubs = []): ConstructorFake
+    {
+        $app = static::getFacadeApplication();
+
+        if (! $app instanceof Container) {
+            throw new RuntimeException('Constructor::fake() needs a Laravel application. Call it from a test that boots the framework.');
+        }
+
+        $fake = ConstructorFake::install($app, $stubs);
+        static::swap($fake);
+
+        return $fake;
+    }
+
     protected static function getFacadeAccessor(): string
     {
         return \ConstructorIO\Laravel\Constructor::class;
