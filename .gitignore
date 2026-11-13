@@ -32,3 +32,6 @@ phpunit.xml
 
 # Claude Code agent worktrees
 /.claude/worktrees/
+
+# Live smoke-test credentials (see .env.live.example)
+.env.live

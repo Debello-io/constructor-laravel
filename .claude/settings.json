@@ -25,7 +25,8 @@
             "Read(./.env.test*)",
             "Read(./.env.backup*)",
             "Read(./.env.bak*)",
-            "Read(./**/.env)"
+            "Read(./**/.env)",
+            "Read(./.env.live)"
         ]
     },
     "hooks": {

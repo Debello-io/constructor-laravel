@@ -22,6 +22,7 @@ You don't need Constructor credentials to work on the package. The tests fake ev
 | `composer format` | Fix code style |
 | `composer analyse` | Static analysis with PHPStan / Larastan at level 8, covering `src` and `tests` |
 | `composer check` | All of the above. Must pass before you open a PR. |
+| `composer test:live` | Smoke tests against a real Constructor test index. Copy `.env.live.example` to `.env.live` and fill it in first; without credentials every test skips. Not part of `composer check` or CI. |
 
 ## How we work
 

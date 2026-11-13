@@ -87,7 +87,7 @@ Source: [Required parameters](https://docs.constructor.com/docs/integrating-with
 - Laravel Pint (`pint.json`, Laravel preset) and PHPStan via Larastan (`phpstan.neon.dist`) must pass.
 - Type everything: parameters, returns, properties. Use `readonly` where possible and `array<string, mixed>`-style docblock generics.
 - Mark parameters that hold URLs, tokens or shopper identifiers `#[\SensitiveParameter]` so they stay out of stack traces.
-- Sponsored products are flagged by Constructor as `labels.is_retail_media` (plus `sl_campaign_id` / `sl_campaign_owner`). `ResultTransformer` normalizes this to `is_sponsored` on each product. Don't check `labels.is_sponsored`: Constructor doesn't send it.
+- Sponsored products are flagged by Constructor as `labels.is_retail_media` (plus `sl_campaign_id` / `sl_campaign_owner`); the response-structure docs also use `labels.is_sponsored`. `ResultTransformer` normalizes either to `is_sponsored` on each product.
 - Comments explain **why**, especially Constructor quirks, and link the docs.constructor.com page that defines the behaviour. Don't narrate what the code obviously does.
 - Names say what things are (`SearchService`, `CatalogService`). No leftovers from demo apps ("Sandbox", fashion/outfit helpers).
 - No dead code, no commented-out code, no unused config keys.
@@ -103,6 +103,7 @@ Before you add or change any request code (path, method, auth, parameter, respon
 ## Testing
 
 - Every test extends `tests/TestCase.php`, which calls `Http::preventStrayRequests()`, so fake every response with `Http::fake()`.
+- The exception is `tests/Live/`: smoke tests against a real index, run with `composer test:live` (separate `phpunit.live.xml.dist`, not part of `composer test` or CI). Credentials come from a git-ignored `.env.live` (see `.env.live.example`); without them every live test skips. Never read or print `.env.live`.
 - `actAsShopperRequest($cookies, $server)` simulates a browser request with beacon cookies. `sentRequests()` lists what was sent; `queryOf($request)` and `pathOf($request)` inspect it, including repeated keys. `spyOnLog()` returns a log spy.
 - Resolve services with `app(Service::class)` (Testbench's `$this->app` is nullable to PHPStan). Tests are analysed at the same PHPStan level as `src`.
 - Assert on the **outgoing request** (path, query, headers, auth), not just on the returned DTO.
@@ -113,6 +114,7 @@ Before you add or change any request code (path, method, auth, parameter, respon
 ```bash
 composer install
 composer test      # PHPUnit
+composer test:live # smoke tests against a real index (needs .env.live)
 composer lint      # Pint, check only
 composer format    # Pint, fix
 composer analyse   # PHPStan / Larastan, level 8, src and tests

@@ -14,3 +14,5 @@
 /phpstan.neon.dist    export-ignore
 /phpunit.xml.dist     export-ignore
 /pint.json            export-ignore
+/phpunit.live.xml.dist export-ignore
+/.env.live.example    export-ignore
