@@ -20,6 +20,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Settings: `product_details_base_url`, `user_profile_base_url` and `user_profile_token` (Bearer token for preferences; defaults to `api_token`).
 - Blade components that render the beacon's tracking markup: `<x-constructor::search-results>`, `browse-results`, `tracking-data`, `item`, `recommendations`, `recommendation-item`, `quiz-results`, `product-detail`, `generic-results` and `button`. They write every documented `data-cnstrc-*` attribute, escaped, and add the `cnstrc-data` script tag on search and browse pages (only when Constructor returned the results). Views can be published with `--tag=constructor-views`.
 - Merchandising configuration from code: `Constructor::configuration()` with `redirectRules()`, `synonymGroups()`, `oneWaySynonyms()`, `sortOptions()`, `facets()`, `facetOptions()` and `refinedQueries()` (searchandising rules for search). Each uses the same `list()` / `get()` / `create()` / `replace()` / `update()` / `delete()` methods, splits bulk writes to Constructor's limits, and validates IDs and names before sending.
+- Agent Insights (`Constructor::insights()`): `searchOverview()`, `chat()`, `answerQuestion()`, `recommendations()` and `refineListing()` for the five `/v1/agent_insights/*` modes, each with a `*Streaming()` twin, returning the new `AgentInsight` DTO. Declined inputs (HTTP 422) come back as `isDeclined()`, not errors.
+- `ApiClient::postStorefront()`, and an optional JSON body on `openStorefrontStream()` (POST streams). Neither is retried.
+
+### Changed
+- The SSE reading loop moved from `AgentService` into the shared `Concerns\ReadsEventStreams` trait. Behaviour is unchanged.
 
 ## [2.0.0] - 2026-11-13
 

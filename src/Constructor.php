@@ -13,6 +13,7 @@ use ConstructorIO\Laravel\Services\BehaviorService;
 use ConstructorIO\Laravel\Services\CatalogBatchingService;
 use ConstructorIO\Laravel\Services\CatalogService;
 use ConstructorIO\Laravel\Services\ConfigurationService;
+use ConstructorIO\Laravel\Services\InsightsService;
 use ConstructorIO\Laravel\Services\PreferenceService;
 use ConstructorIO\Laravel\Services\ProductDetailsService;
 use ConstructorIO\Laravel\Services\QuizService;
@@ -27,13 +28,14 @@ use SplFileInfo;
  * The package's entry point, and what the Constructor facade resolves to.
  *
  * Storefront methods (search, browse, autocomplete, recommendations...) are
- * available directly. The AI agents, quizzes, product details, shopper
- * preferences, catalog management and offline behavioral actions have their
- * own services:
+ * available directly. The AI agents, Agent Insights, quizzes, product details,
+ * shopper preferences, catalog management and offline behavioral actions have
+ * their own services:
  *
  *     Constructor::search('pellet grill');
  *     Constructor::getRecommendations('home-bestsellers');
  *     Constructor::agent()->askShoppingAgent('A grill for a small balcony');
+ *     Constructor::insights()->searchOverview('smoker for a small patio');
  *     Constructor::catalog()->uploadCatalog(storage_path('catalog/items.jsonl'));
  *     Constructor::quizzes()->getNextQuestion('grill-finder');
  *     Constructor::behavior()->recordOfflinePurchases($storeSales);
@@ -57,6 +59,7 @@ class Constructor implements SearchProvider
         protected readonly ProductDetailsService $productDetails,
         protected readonly PreferenceService $preferences,
         protected readonly ConfigurationService $configuration,
+        protected readonly InsightsService $insights,
     ) {}
 
     /*
@@ -99,6 +102,15 @@ class Constructor implements SearchProvider
     public function catalogBatching(): CatalogBatchingService
     {
         return $this->catalogBatching;
+    }
+
+    /**
+     * Agent Insights: AI search overviews, chat, product answers, curated
+     * recommendation sets and listing refinements.
+     */
+    public function insights(): InsightsService
+    {
+        return $this->insights;
     }
 
     /**

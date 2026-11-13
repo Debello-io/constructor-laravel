@@ -3,6 +3,7 @@
 namespace ConstructorIO\Laravel\Services;
 
 use ConstructorIO\Laravel\Concerns\HandlesStorefrontFailures;
+use ConstructorIO\Laravel\Concerns\ReadsEventStreams;
 use ConstructorIO\Laravel\Exceptions\ApiException;
 use ConstructorIO\Laravel\Exceptions\ConnectionException;
 use ConstructorIO\Laravel\Exceptions\ConstructorException;
@@ -12,10 +13,6 @@ use ConstructorIO\Laravel\Http\Path;
 use ConstructorIO\Laravel\Support\ConstructorConfig;
 use ConstructorIO\Laravel\Support\ParameterBuilder;
 use ConstructorIO\Laravel\Support\ResultTransformer;
-use ConstructorIO\Laravel\Support\ServerSentEventParser;
-use Illuminate\Support\Carbon;
-use Psr\Http\Message\StreamInterface;
-use RuntimeException;
 use SensitiveParameter;
 
 /**
@@ -62,9 +59,7 @@ use SensitiveParameter;
 class AgentService
 {
     use HandlesStorefrontFailures;
-
-    /** Bytes to read from the stream at a time. */
-    private const STREAM_CHUNK_SIZE = 8192;
+    use ReadsEventStreams;
 
     protected readonly ConstructorConfig $config;
 
@@ -279,17 +274,7 @@ class AgentService
 
     /**
      * Open an SSE stream and call $handle(event, data) for every event.
-     *
-     * The body is read in chunks rather than buffered, so events reach the
-     * caller as soon as Constructor sends them. Keep-alive "ping" events are
-     * dropped here.
-     *
-     * Two guarantees a caller can rely on:
-     *   - The whole response must finish within stream_timeout seconds.
-     *     Pings don't extend it: a stream that only ever sends keep-alives
-     *     would otherwise hold the PHP worker forever.
-     *   - A stream that ends before Constructor's `end` event is a failure,
-     *     not a short answer. It throws instead of returning partial text.
+     * See ReadsEventStreams::readEventStream() for the guarantees.
      *
      * @param  callable(string, mixed): void  $handle
      *
@@ -297,59 +282,7 @@ class AgentService
      */
     private function streamEvents(#[SensitiveParameter] string $url, callable $handle): void
     {
-        $body = $this->api->openStorefrontStream($url);
-        $parser = new ServerSentEventParser;
-        $deadline = Carbon::now()->addSeconds($this->config->streamTimeout);
-        $receivedEnd = false;
-
-        $dispatch = function (array $events) use ($handle, &$receivedEnd): void {
-            foreach ($events as $event) {
-                if ($event['event'] === 'ping') {
-                    continue;
-                }
-
-                $receivedEnd = $receivedEnd || $event['event'] === 'end';
-                $handle($event['event'], $event['data']);
-            }
-        };
-
-        try {
-            while (! $body->eof()) {
-                if (Carbon::now()->greaterThan($deadline)) {
-                    throw new ConnectionException(
-                        "The Constructor agent response exceeded {$this->config->streamTimeout} seconds (CONSTRUCTOR_STREAM_TIMEOUT)."
-                    );
-                }
-
-                $dispatch($parser->feed($this->readChunk($body)));
-            }
-
-            $endedMidEvent = $parser->hasPartialEvent();
-            $dispatch($parser->flush());
-
-            if (! $receivedEnd || $endedMidEvent) {
-                throw new ConnectionException('The Constructor agent stream ended before the response was complete.');
-            }
-        } finally {
-            $body->close();
-        }
-    }
-
-    /**
-     * Read the next chunk of a stream.
-     *
-     * Guzzle throws a plain RuntimeException when the connection drops or
-     * times out mid-stream; report it as a ConnectionException.
-     *
-     * @throws ConnectionException
-     */
-    private function readChunk(StreamInterface $body): string
-    {
-        try {
-            return $body->read(self::STREAM_CHUNK_SIZE);
-        } catch (RuntimeException $e) {
-            throw new ConnectionException('The Constructor agent stream was interrupted: '.$e->getMessage(), 0, $e);
-        }
+        $this->readEventStream($this->api->openStorefrontStream($url), $this->config->streamTimeout, $handle);
     }
 
     /**

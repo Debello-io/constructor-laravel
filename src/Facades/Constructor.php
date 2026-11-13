@@ -52,6 +52,7 @@ use RuntimeException;
  * @method static \ConstructorIO\Laravel\Services\AgentService agent()
  * @method static \ConstructorIO\Laravel\Services\CatalogService catalog()
  * @method static \ConstructorIO\Laravel\Services\CatalogBatchingService catalogBatching()
+ * @method static \ConstructorIO\Laravel\Services\InsightsService insights()
  * @method static \ConstructorIO\Laravel\Services\QuizService quizzes()
  * @method static \ConstructorIO\Laravel\Services\BehaviorService behavior()
  * @method static \ConstructorIO\Laravel\Services\ProductDetailsService productDetails()

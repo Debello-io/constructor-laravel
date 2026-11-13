@@ -176,7 +176,7 @@ class SearchService
         $parameters = $this->imageSearchParameters($options);
 
         return $this->attempt('searchByImage', function () use ($bytes, $parameters, $options) {
-            $response = $this->api->postStorefront(
+            $response = $this->api->postStorefrontBody(
                 $this->config->imageSearchBaseUrl,
                 '/v2/image_search',
                 $bytes,

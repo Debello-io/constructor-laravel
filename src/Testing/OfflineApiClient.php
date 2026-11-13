@@ -28,7 +28,7 @@ class OfflineApiClient extends ApiClient
         return [];
     }
 
-    public function postStorefront(
+    public function postStorefrontBody(
         string $baseUrl,
         string $path,
         #[SensitiveParameter] string $body,
@@ -39,7 +39,18 @@ class OfflineApiClient extends ApiClient
         return [];
     }
 
-    public function openStorefrontStream(#[SensitiveParameter] string $url): StreamInterface
+    public function postStorefrontJson(
+        string $baseUrl,
+        string $path,
+        array $body,
+        array $query = [],
+        array $identity = [],
+        ?int $timeout = null,
+    ): array {
+        return [];
+    }
+
+    public function openStorefrontStream(#[SensitiveParameter] string $url, ?array $json = null): StreamInterface
     {
         return Utils::streamFor("event: end\ndata: {}\n\n");
     }

@@ -10,6 +10,7 @@ use ConstructorIO\Laravel\Services\BehaviorService;
 use ConstructorIO\Laravel\Services\CatalogBatchingService;
 use ConstructorIO\Laravel\Services\CatalogService;
 use ConstructorIO\Laravel\Services\ConfigurationService;
+use ConstructorIO\Laravel\Services\InsightsService;
 use ConstructorIO\Laravel\Services\PreferenceService;
 use ConstructorIO\Laravel\Services\ProductDetailsService;
 use ConstructorIO\Laravel\Services\QuizService;
@@ -86,6 +87,7 @@ abstract class TestCase extends Orchestra
             AgentService::class,
             CatalogService::class,
             CatalogBatchingService::class,
+            InsightsService::class,
             QuizService::class,
             BehaviorService::class,
             ProductDetailsService::class,

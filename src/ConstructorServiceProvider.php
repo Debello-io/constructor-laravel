@@ -18,6 +18,7 @@ use ConstructorIO\Laravel\Services\Configuration;
 use ConstructorIO\Laravel\Services\ConfigurationService;
 use ConstructorIO\Laravel\Services\ConstructorAgentService;
 use ConstructorIO\Laravel\Services\ConstructorService;
+use ConstructorIO\Laravel\Services\InsightsService;
 use ConstructorIO\Laravel\Services\PreferenceService;
 use ConstructorIO\Laravel\Services\ProductDetailsService;
 use ConstructorIO\Laravel\Services\QuizService;
@@ -72,6 +73,7 @@ class ConstructorServiceProvider extends ServiceProvider
         $this->app->singleton(AgentService::class);
         $this->app->singleton(CatalogService::class);
         $this->app->singleton(CatalogBatchingService::class);
+        $this->app->singleton(InsightsService::class);
         $this->app->singleton(QuizService::class);
         $this->app->singleton(BehaviorService::class);
         $this->app->singleton(ProductDetailsService::class);

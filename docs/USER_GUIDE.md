@@ -1595,6 +1595,81 @@ Route::post('/products/{sku}/questions', function (Request $request, string $sku
 })->middleware('throttle:30,1');
 ```
 
+### Agent Insights
+
+[Agent insights API reference](https://docs.constructor.com/reference/v1-asa-retrieve-agent-insights-search)
+
+Agent Insights puts AI answers inside the pages shoppers already use. There are five modes; every one takes the same options and returns an `AgentInsight`:
+
+| Method | Mode | Use it for | On failure |
+|--------|------|-----------|------------|
+| `searchOverview($query)` | `search` | A short AI overview above search results | Logs, returns empty |
+| `chat($message)` | `chat` | One turn of a conversation | Throws |
+| `answerQuestion($question, $itemId)` | `qna` | The question box on a product page | Throws |
+| `recommendations($itemId, $strategy)` | `recommendations` | A curated, explained recommendation widget | Logs, returns empty |
+| `refineListing($listing, $refinement)` | `query_refinement` | "Only white", "under $200" on a listing page, plus refinement chips | Logs, returns empty |
+
+```php
+$overview = Constructor::insights()->searchOverview($query, [
+    'page_context' => ['page_type' => 'plp', 'search_term' => $query],
+]);
+
+$overview->status;          // complete | partial | declined | unavailable
+$overview->message;         // the overview text
+$overview->itemResults;     // sets of products, each with the agent's title and text
+$overview->products();      // every product; each has the result_id of its set, for click tracking
+$overview->articles;        // knowledge base articles cited: url, title, image_url, abstract
+$overview->followUpOptions();
+$overview->resultId;        // send with agent tracking events
+$overview->threadId;        // pass back as thread_id to continue
+```
+
+**Declined queries.** Constructor can decide a query is better served by traditional search, and answers HTTP 422. That isn't an error: you get `isDeclined() === true` (nothing is logged), and you render your normal results. `chat` can decline too; `query_refinement` never does.
+
+**Where the shopper is.** `page_context` tells the agent which page the request came from. Friendly keys work like the rest of the package:
+
+```php
+'page_context' => [
+    'page_type' => 'plp',                     // home | plp | pdp | collection | email_campaign | cart
+    'search_term' => 'pellet grill',
+    'group_id' => 'grills',                   // or collection_id: the browse filter
+    'filters' => ['brand' => ['Traeger', 'Weber'], 'in_stock' => true],
+    'range_filters' => ['price' => ['min' => 300, 'max' => 900]],
+    'filter_match_types' => ['brand' => 'all'],
+],
+```
+
+Constructor's own shape (`browse_filter` and a list of filter expressions) is accepted too, so a `refinedListing()` can be sent back unchanged. `page_type` defaults to `home`, or to `pdp` for `answerQuestion()` and `recommendations()`.
+
+**Other options**, shared by every mode: `thread_id`, `guard` (default `CONSTRUCTOR_AGENT_GUARD`), `num_result_events`, `num_results_per_event`, `fmt_options`, `hidden_fields`, `qs` (parameters forwarded to the agent's own search, browse and recommendations calls, e.g. `['sort_by' => 'price']`), `user_segments`, `features`, `feature_variants` and the identity overrides. Leave `num_result_events` unset for overviews unless you mean to drop product sets.
+
+**Mode-specific options:**
+
+- `chat()`: `domain` (defaults to `CONSTRUCTOR_AGENT_DOMAIN`). `chat()` and `answerQuestion()` accept `prices`, request-only member or quantity prices the agent should quote; Constructor only accepts these where it has enabled request context for you.
+- `recommendations()`: `$strategy` is the routing rule configured for your index key (for example `complementary_pod`), not a Recommendations API pod ID. Pass the option the shopper picked as `refinement`, and `default_title` (at most 100 characters) for the non-personalized set.
+- `refineListing()`: `$listing` needs a `search_term`, a `group_id`, or both. The service keeps no filter state, so send `$refined->refinedListing()` as the next listing with the same `thread_id`. Leave `$refinement` null when the page opens, after a chip is applied and after the shopper changes filters. Chips follow the shopper's history, so don't cache them across shoppers.
+
+Answers take longer than a search, so these requests use `CONSTRUCTOR_STREAM_TIMEOUT`. They are never retried: a repeat would add a second turn to the shopper's thread.
+
+#### Streaming
+
+Each method has a `*Streaming()` twin (`searchOverviewStreaming()`, `chatStreaming()`, `answerQuestionStreaming()`, `recommendationsStreaming()`, `refineListingStreaming()`) that passes Constructor's events to your callback as they arrive: `start`, `message`, `item_results` (with a ready-made `products` list added), `follow_up_refinement`, `article_reference`, `image_meta`, `recipe_info`, `recipe_instructions` and `end`. They return `false` when Constructor declined the input, and throw on `server_error` or a stream that ends early.
+
+```php
+return response()->stream(function () use ($query) {
+    Constructor::insights()->searchOverviewStreaming($query, function (string $event, array $data) {
+        if (in_array($event, ['message', 'item_results', 'end'], true)) {
+            echo "event: {$event}\ndata: ".json_encode($data)."\n\n";
+            ob_flush(); flush();
+        }
+    });
+}, 200, ['Content-Type' => 'text/event-stream', 'Cache-Control' => 'no-cache', 'X-Accel-Buffering' => 'no']);
+```
+
+Render agent text as text, not HTML, as with the Shopping Agent.
+
+**Tracking.** Constructor's JavaScript tracker records agent events (`trackAgentResultView`, `trackAgentResultClick`, ...). Pass `resultId` to the page for those, and each product's `result_id` with clicks on it. See [Implement AI Shopping Agent](https://docs.constructor.com/docs/products-ai-shopping-agents-learn-about-ai-shopping-agent-implement-ai-shopping-agent).
+
 ---
 
 ## 11. Behavioral tracking
@@ -2485,6 +2560,24 @@ Returned by `Constructor::quizzes()->getResults()`.
 | `metadata` | `request`, `request_id`, `result_id`, `experiments` |
 
 Methods: `isEmpty()`, `hasResults()`, `totalPages()`, `hasMore()`, `toArray()`, `QuizResults::empty($quizId)`.
+
+### AgentInsight
+
+Returned by every `Constructor::insights()` method.
+
+| Property | Meaning |
+|----------|---------|
+| `mode` | `search`, `chat`, `qna`, `recommendations` or `query_refinement` |
+| `status` | `complete`, `partial` (cut short), `declined` (HTTP 422: use traditional search) or `unavailable` (failed and logged) |
+| `resultId` | The agent insight result ID, for tracking |
+| `threadId` | Pass back as `thread_id` to continue the conversation |
+| `message`, `route` | The agent's text, and where to send the shopper (`customer_support`) |
+| `itemResults` | Sets of products: `result_id`, `title`, `text`, `request`, `products`, `listing` (refinement only) |
+| `articles`, `images`, `recipes` | Cited articles (`url`, `title`, `image_url`, `abstract`), referenced images, recipes |
+| `followUp` | `question`, `options` (text) and `choices` (one filter each), or `null` |
+| `raw` | The full response |
+
+Methods: `isComplete()`, `isPartial()`, `isDeclined()`, `hasContent()`, `products()`, `hasProducts()`, `followUpOptions()`, `followUpChoices()`, `refinedListing()`, `toArray()`, `AgentInsight::declined($mode)`, `AgentInsight::unavailable($mode)`.
 
 ---
 
