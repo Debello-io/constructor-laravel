@@ -162,6 +162,12 @@ $results->sortOptions;     // sort options configured in the dashboard
 $results->resultId;        // pass to the page for tracking
 ```
 
+Voice and conversational queries go to `naturalLanguageSearch()`, which takes the same filters and options and returns the same `SearchResults`. Constructor turns phrases like "under 500 dollars" into filters:
+
+```php
+$results = Constructor::naturalLanguageSearch('show me a gas grill for under 500 dollars');
+```
+
 Every option (`offset`, `filter_match_types`, `pre_filter_expression`, `hidden_fields`, `fmt_options`, `variations_map`, `user_segments`, `lang`, `parameters`, ...) is documented on [`ParameterBuilder`](src/Support/ParameterBuilder.php).
 
 ### Browse (category, brand and collection pages)
@@ -177,6 +183,14 @@ $collection  = Constructor::getCollection('summer-cookout');      // name, data,
 $products    = Constructor::browseCollection('summer-cookout');
 
 $recentlyViewed = Constructor::browseItems(['TRG-780', 'WEB-SPIRIT-E325']);
+```
+
+Facets with their options, for a filter sidebar or "Shop by" menu without running a search (at most 10 facets per request; page through the rest):
+
+```php
+$page = Constructor::getFacetsWithOptions(['page' => 1]);
+$page['facets']['brand']['options'];   // same shape as $results->facets
+$page['has_more'];
 ```
 
 ### Autocomplete
