@@ -4,13 +4,15 @@ namespace ConstructorIO\Laravel\Tests\Unit;
 
 use ConstructorIO\Laravel\Constructor;
 use ConstructorIO\Laravel\Facades\Constructor as ConstructorFacade;
+use ConstructorIO\Laravel\Testing\ConstructorFake;
 use PHPUnit\Framework\TestCase;
 use ReflectionClass;
 use ReflectionMethod;
 
 /**
  * The facade's @method list is what IDEs and static analysis see. Keep it in
- * sync with the public methods of the class it proxies.
+ * sync with the public methods of the class it proxies, and of the fake it
+ * proxies after Constructor::fake().
  */
 class FacadeDocblockTest extends TestCase
 {
@@ -28,6 +30,14 @@ class FacadeDocblockTest extends TestCase
                 fn (ReflectionMethod $method) => ! $method->isConstructor(),
             ),
         );
+
+        // After Constructor::fake(), the facade also proxies the fake's own
+        // instance methods (stub, calls and the assert* methods).
+        foreach ((new ReflectionClass(ConstructorFake::class))->getMethods(ReflectionMethod::IS_PUBLIC) as $method) {
+            if (! $method->isStatic() && ! method_exists(Constructor::class, $method->getName())) {
+                $public[] = $method->getName();
+            }
+        }
 
         sort($documented);
         sort($public);

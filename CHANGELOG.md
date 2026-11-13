@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+- `Constructor::fake()`: a recording test fake. Nothing is sent and no credentials are needed; unstubbed calls return their normal empty result. Assertions: `assertSearched()`, `assertNotSearched()`, `assertBrowsed()`, `assertAutocompleted()`, `assertRecommended()`, `assertCalled()`, `assertNotCalled()`, `assertCalledTimes()`, `assertNothingCalled()`, plus `stub()` and `calls()`.
+
 ## [2.0.0] - 2026-11-13
 
 A full review against Constructor's API reference and backend-integration documentation. See [UPGRADE.md](UPGRADE.md).
