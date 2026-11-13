@@ -14,6 +14,8 @@ use ConstructorIO\Laravel\Services\AgentService;
 use ConstructorIO\Laravel\Services\BehaviorService;
 use ConstructorIO\Laravel\Services\CatalogBatchingService;
 use ConstructorIO\Laravel\Services\CatalogService;
+use ConstructorIO\Laravel\Services\PreferenceService;
+use ConstructorIO\Laravel\Services\ProductDetailsService;
 use ConstructorIO\Laravel\Services\QuizService;
 use ConstructorIO\Laravel\Services\RecommendationService;
 use ConstructorIO\Laravel\Services\SearchService;
@@ -413,6 +415,16 @@ class ConstructorFake extends Constructor
     public function quizzes(): QuizService
     {
         return app(QuizService::class);
+    }
+
+    public function productDetails(): ProductDetailsService
+    {
+        return app(ProductDetailsService::class);
+    }
+
+    public function preferences(): PreferenceService
+    {
+        return app(PreferenceService::class);
     }
 
     public function behavior(): BehaviorService

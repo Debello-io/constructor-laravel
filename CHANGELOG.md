@@ -15,6 +15,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - `image_search_base_url` setting (`CONSTRUCTOR_IMAGE_SEARCH_BASE_URL`).
 - `ApiClient::postStorefront()` for storefront endpoints that take a raw request body.
 - Artisan commands: `constructor:verify` (checks configuration and credentials without printing secrets), `constructor:upload` (catalog files, with `--wait`) and `constructor:task` (a task's status, with `--wait`).
+- Product details: `Constructor::productDetails()` with `getItem()`, `getItems()` (up to 20) and `getVariations()` (up to 100), returning enriched attributes and badges from `product-details.cnstrc.com`.
+- Shopper preferences: `Constructor::preferences()` with `setForCurrentUser()` (respects consent and the storefront `ui`), `setUserPreference()`, `setPreferences()` (100 per request) and `uploadPreferencesFile()` for the User profile API.
+- Settings: `product_details_base_url`, `user_profile_base_url` and `user_profile_token` (Bearer token for preferences; defaults to `api_token`).
 
 ## [2.0.0] - 2026-11-13
 

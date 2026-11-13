@@ -57,6 +57,9 @@ final class ConstructorConfig
         /** @var array<string, int> Seconds per response type (categories, facets, collections). */
         public readonly array $cacheTtlOverrides = [],
         public readonly string $imageSearchBaseUrl = 'https://image-search.cnstrc.com',
+        public readonly string $productDetailsBaseUrl = 'https://product-details.cnstrc.com',
+        public readonly string $userProfileBaseUrl = 'https://user-profile.cnstrc.com',
+        public readonly ?string $userProfileToken = null,
     ) {}
 
     /**
@@ -112,6 +115,15 @@ final class ConstructorConfig
                 'image_search_base_url',
                 $config['image_search_base_url'] ?? 'https://image-search.cnstrc.com',
             ),
+            productDetailsBaseUrl: self::secureUrl(
+                'product_details_base_url',
+                $config['product_details_base_url'] ?? 'https://product-details.cnstrc.com',
+            ),
+            userProfileBaseUrl: self::secureUrl(
+                'user_profile_base_url',
+                $config['user_profile_base_url'] ?? 'https://user-profile.cnstrc.com',
+            ),
+            userProfileToken: self::stringOrNull($config['user_profile_token'] ?? null),
         );
     }
 
@@ -159,6 +171,26 @@ final class ConstructorConfig
     }
 
     /**
+     * The token for the User profile API (shopper preferences), sent as a
+     * Bearer token. CONSTRUCTOR_USER_PROFILE_TOKEN if set, otherwise the API
+     * token: both are dashboard API tokens, and the endpoint accepts any
+     * token that has the `user_profile.user_preferences(w)` scope.
+     *
+     * @see https://docs.constructor.com/reference/main-authentication
+     *
+     * @throws ConfigurationException
+     */
+    public function requireUserProfileToken(): string
+    {
+        // Deliberately no fallback to api_token: credentials are never
+        // reused for another purpose, and a token scoped to preferences
+        // can't touch the catalog if it leaks.
+        return $this->userProfileToken ?? throw new ConfigurationException(
+            'CONSTRUCTOR_USER_PROFILE_TOKEN is not set. Shopper preferences need a dashboard API token with the user_profile.user_preferences(w) scope.'
+        );
+    }
+
+    /**
      * The agent domain. Only the AI Shopping Agent needs it.
      *
      * @throws ConfigurationException
@@ -179,7 +211,7 @@ final class ConstructorConfig
     {
         $properties = get_object_vars($this);
 
-        foreach (['apiToken', 'backendToken'] as $secret) {
+        foreach (['apiToken', 'backendToken', 'userProfileToken'] as $secret) {
             if ($properties[$secret] !== null) {
                 $properties[$secret] = '********';
             }

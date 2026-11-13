@@ -67,6 +67,16 @@ class OfflineApiClient extends ApiClient
         return [];
     }
 
+    public function userProfile(string $method, string $path, array $json): array
+    {
+        return [];
+    }
+
+    public function uploadToUserProfile(string $method, string $path, array $files, int $timeout): array
+    {
+        return [];
+    }
+
     public function catalogUrl(string $path, array $query = [], ?string $baseUrl = null): string
     {
         return ($baseUrl ?? $this->config()->searchBaseUrl).$path;

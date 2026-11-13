@@ -34,6 +34,10 @@ use Throwable;
  *               Private. Authenticated with the API token as the HTTP Basic
  *               username, no password.
  *
+ *   User profile  shopper preferences. Private. This API only documents
+ *               Bearer authentication, so the token is sent as
+ *               `Authorization: Bearer ...` (see userProfile()).
+ *
  * Every response goes through throwIfFailed(), so callers get the same typed
  * exceptions whichever endpoint they use.
  *
@@ -229,6 +233,55 @@ class ApiClient
 
     /*
     |--------------------------------------------------------------------------
+    | User profile endpoints
+    |--------------------------------------------------------------------------
+    */
+
+    /**
+     * Send JSON to the User profile API with the user profile token as a
+     * Bearer token. Writes are never retried, like catalog writes.
+     *
+     * Only `key` is added to the query string: the API documents no other
+     * parameters.
+     *
+     * @param  array<string, mixed>  $json
+     * @return array<string, mixed>
+     *
+     * @see https://docs.constructor.com/reference/v1-user-profile-create-preferences
+     */
+    public function userProfile(string $method, string $path, array $json): array
+    {
+        $url = $this->userProfileUrl($path);
+
+        return $this->send(fn () => $this->userProfileRequest()->send($method, $url, ['json' => $json]), $url);
+    }
+
+    /**
+     * Upload files as multipart form data to the User profile API. Sent
+     * exactly once, for the same reasons as uploadToCatalog().
+     *
+     * @param  array<string, array{0: resource, 1: string}>  $files  [form field => [open file handle, file name]]
+     * @return array<string, mixed>
+     */
+    public function uploadToUserProfile(string $method, string $path, array $files, int $timeout): array
+    {
+        $url = $this->userProfileUrl($path);
+        $request = $this->userProfileRequest()->timeout($timeout);
+
+        foreach ($files as $fieldName => [$handle, $fileName]) {
+            $request->attach($fieldName, $handle, $fileName);
+        }
+
+        return $this->send(fn () => $request->send($method, $url, ['multipart' => []]), $url);
+    }
+
+    private function userProfileUrl(string $path): string
+    {
+        return $this->config->userProfileBaseUrl.$path.'?'.QueryString::build(['key' => $this->config->requireApiKey()]);
+    }
+
+    /*
+    |--------------------------------------------------------------------------
     | Responses and errors
     |--------------------------------------------------------------------------
     */
@@ -323,6 +376,16 @@ class ApiClient
     {
         return $this->baseRequest($retry)
             ->withBasicAuth($this->config->requireApiToken(), '')
+            ->acceptJson();
+    }
+
+    /**
+     * A pending request for the User profile API: Bearer token, no retries.
+     */
+    private function userProfileRequest(): PendingRequest
+    {
+        return $this->baseRequest(retry: false)
+            ->withToken($this->config->requireUserProfileToken())
             ->acceptJson();
     }
 

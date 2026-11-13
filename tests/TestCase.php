@@ -9,6 +9,8 @@ use ConstructorIO\Laravel\Services\AgentService;
 use ConstructorIO\Laravel\Services\BehaviorService;
 use ConstructorIO\Laravel\Services\CatalogBatchingService;
 use ConstructorIO\Laravel\Services\CatalogService;
+use ConstructorIO\Laravel\Services\PreferenceService;
+use ConstructorIO\Laravel\Services\ProductDetailsService;
 use ConstructorIO\Laravel\Services\QuizService;
 use ConstructorIO\Laravel\Services\RecommendationService;
 use ConstructorIO\Laravel\Services\SearchService;
@@ -56,6 +58,7 @@ abstract class TestCase extends Orchestra
         $app['config']->set('constructor.api_key', 'key_test');
         $app['config']->set('constructor.api_token', 'tok_secret_api_token');
         $app['config']->set('constructor.backend_token', 'backend_security_token');
+        $app['config']->set('constructor.user_profile_token', 'tok_user_profile');
         $app['config']->set('constructor.agent.domain', 'test-agent-domain');
         $app['config']->set('constructor.retry_delay', 0);
     }
@@ -84,6 +87,8 @@ abstract class TestCase extends Orchestra
             CatalogBatchingService::class,
             QuizService::class,
             BehaviorService::class,
+            ProductDetailsService::class,
+            PreferenceService::class,
             Constructor::class,
         ] as $singleton) {
             app()->forgetInstance($singleton);

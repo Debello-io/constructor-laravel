@@ -12,6 +12,8 @@ use ConstructorIO\Laravel\Services\AgentService;
 use ConstructorIO\Laravel\Services\BehaviorService;
 use ConstructorIO\Laravel\Services\CatalogBatchingService;
 use ConstructorIO\Laravel\Services\CatalogService;
+use ConstructorIO\Laravel\Services\PreferenceService;
+use ConstructorIO\Laravel\Services\ProductDetailsService;
 use ConstructorIO\Laravel\Services\QuizService;
 use ConstructorIO\Laravel\Services\RecommendationService;
 use ConstructorIO\Laravel\Services\SearchService;
@@ -24,8 +26,9 @@ use SplFileInfo;
  * The package's entry point, and what the Constructor facade resolves to.
  *
  * Storefront methods (search, browse, autocomplete, recommendations...) are
- * available directly. The AI agents, quizzes, catalog management and
- * offline behavioral actions have their own services:
+ * available directly. The AI agents, quizzes, product details, shopper
+ * preferences, catalog management and offline behavioral actions have their
+ * own services:
  *
  *     Constructor::search('pellet grill');
  *     Constructor::getRecommendations('home-bestsellers');
@@ -33,6 +36,8 @@ use SplFileInfo;
  *     Constructor::catalog()->uploadCatalog(storage_path('catalog/items.jsonl'));
  *     Constructor::quizzes()->getNextQuestion('grill-finder');
  *     Constructor::behavior()->recordOfflinePurchases($storeSales);
+ *     Constructor::productDetails()->getItem('TRG-780');
+ *     Constructor::preferences()->setForCurrentUser('fuel_type', ['pellet']);
  *
  * Each method here only delegates, so its full documentation lives on the
  * service it calls.
@@ -47,6 +52,8 @@ class Constructor implements SearchProvider
         protected readonly CatalogBatchingService $catalogBatching,
         protected readonly QuizService $quizzes,
         protected readonly BehaviorService $behavior,
+        protected readonly ProductDetailsService $productDetails,
+        protected readonly PreferenceService $preferences,
     ) {}
 
     /*
@@ -105,6 +112,23 @@ class Constructor implements SearchProvider
     public function behavior(): BehaviorService
     {
         return $this->behavior;
+    }
+
+    /**
+     * Product details: enriched attributes and badges for product pages.
+     */
+    public function productDetails(): ProductDetailsService
+    {
+        return $this->productDetails;
+    }
+
+    /**
+     * Shopper preferences (User profile API). Needs a token with the
+     * user_profile.user_preferences(w) scope.
+     */
+    public function preferences(): PreferenceService
+    {
+        return $this->preferences;
     }
 
     /*

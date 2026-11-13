@@ -35,6 +35,13 @@ return [
     |                requests. Without it, requests from your servers are
     |                likely to be throttled. Ask your Constructor contact.
     |
+    | user_profile_token
+    |                Secret, only for shopper preferences. The User profile
+    |                API only accepts Bearer authentication with a dashboard
+    |                API token that has the `user_profile.user_preferences(w)`
+    |                scope. Create one just for this, so it can't do anything
+    |                else. There is no fallback to api_token.
+    |
     | @see https://docs.constructor.com/reference/main-authentication
     | @see https://docs.constructor.com/docs/integrating-with-constructor-direct-api-integration-required-parameters
     |
@@ -45,6 +52,8 @@ return [
     'api_token' => env('CONSTRUCTOR_API_TOKEN'),
 
     'backend_token' => env('CONSTRUCTOR_BACKEND_TOKEN'),
+
+    'user_profile_token' => env('CONSTRUCTOR_USER_PROFILE_TOKEN'),
 
     /*
     |--------------------------------------------------------------------------
@@ -80,10 +89,16 @@ return [
     | catalog_batching_base_url
     |                   The Catalog Batching Service, for frequent small item
     |                   and variation updates such as price and stock.
+    | product_details_base_url
+    |                   Product details (enriched attributes and badges).
+    | user_profile_base_url
+    |                   The User profile API (shopper preferences).
     |
     | @see https://docs.constructor.com/reference/v1-quizzes-get-next-question
     | @see https://docs.constructor.com/reference/v2-image-search-retrieve-search-results
     | @see https://docs.constructor.com/reference/v2-batching-items-update-items
+    | @see https://docs.constructor.com/reference/v1-product-details-get-items
+    | @see https://docs.constructor.com/reference/v1-user-profile-create-preferences
     |
     */
 
@@ -96,6 +111,10 @@ return [
     'image_search_base_url' => env('CONSTRUCTOR_IMAGE_SEARCH_BASE_URL', 'https://image-search.cnstrc.com'),
 
     'catalog_batching_base_url' => env('CONSTRUCTOR_CATALOG_BATCHING_BASE_URL', 'https://batching.catalog.cnstrc.com'),
+
+    'product_details_base_url' => env('CONSTRUCTOR_PRODUCT_DETAILS_BASE_URL', 'https://product-details.cnstrc.com'),
+
+    'user_profile_base_url' => env('CONSTRUCTOR_USER_PROFILE_BASE_URL', 'https://user-profile.cnstrc.com'),
 
     /*
     |--------------------------------------------------------------------------
