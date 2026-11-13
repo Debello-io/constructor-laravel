@@ -27,6 +27,7 @@ final class ConstructorConfig
         public readonly string $clientIdentifier,
         public readonly string $searchBaseUrl,
         public readonly string $agentBaseUrl,
+        public readonly string $catalogBatchingBaseUrl,
         public readonly string $defaultSection,
         public readonly bool $generateClientId,
         public readonly bool $sendUserId,
@@ -65,6 +66,10 @@ final class ConstructorConfig
                 ?? 'cio-be-web-'.(Str::slug($appName) ?: 'laravel'),
             searchBaseUrl: self::secureUrl('search_base_url', $config['search_base_url'] ?? 'https://ac.cnstrc.com'),
             agentBaseUrl: self::secureUrl('agent_base_url', $config['agent_base_url'] ?? 'https://agent.cnstrc.com'),
+            catalogBatchingBaseUrl: self::secureUrl(
+                'catalog_batching_base_url',
+                $config['catalog_batching_base_url'] ?? 'https://batching.catalog.cnstrc.com',
+            ),
             defaultSection: self::stringOrNull($config['default_section'] ?? null) ?? 'Products',
             generateClientId: (bool) ($config['identity']['generate_client_id'] ?? true),
             sendUserId: (bool) ($config['identity']['send_user_id'] ?? true),

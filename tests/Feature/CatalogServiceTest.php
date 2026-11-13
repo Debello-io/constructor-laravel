@@ -387,6 +387,203 @@ class CatalogServiceTest extends TestCase
         $this->assertTrue($status['indexed']);
     }
 
+    public function test_upsert_variations_requires_an_item_id_and_moves_extra_fields_into_data(): void
+    {
+        Http::fake(['*' => Http::response(['task_id' => 8, 'task_status_path' => '/v1/tasks/8'])]);
+
+        $results = $this->catalog()->upsertVariations([
+            ['id' => 'TRG-780-BLK', 'item_id' => 'TRG-780', 'name' => 'Pro 780 Black', 'color' => 'Black', 'data' => ['price' => 999]],
+        ], 'Products', ['notification_email' => 'catalog@example.com']);
+
+        $this->assertSame(8, $results[0]['task_id']);
+        Http::assertSent(function (Request $request) {
+            $query = $this->queryOf($request);
+
+            $this->assertSame('PUT', $request->method());
+            $this->assertSame('/v2/variations', $this->pathOf($request));
+            $this->assertBasicAuthWithApiToken($request);
+            $this->assertSame(['Products'], $query['section']);
+            $this->assertSame(['catalog@example.com'], $query['notification_email']);
+            $this->assertSame([
+                ['id' => 'TRG-780-BLK', 'item_id' => 'TRG-780', 'name' => 'Pro 780 Black', 'data' => ['color' => 'Black', 'price' => 999]],
+            ], $request->data()['variations']);
+
+            return true;
+        });
+
+        $this->expectException(InvalidCatalogDataException::class);
+        $this->expectExceptionMessage('needs a non-empty "item_id"');
+        $this->catalog()->upsertVariations([['id' => 'ORPHAN']]);
+    }
+
+    public function test_patch_and_delete_variations(): void
+    {
+        Http::fake(['*' => Http::response(['task_id' => 9, 'task_status_path' => '/v1/tasks/9'])]);
+
+        $this->catalog()->patchVariations([['id' => 'TRG-780-BLK', 'in_stock' => false]], null, ['on_missing' => 'ignore']);
+        $this->catalog()->deleteVariations(['TRG-780-BLK', '', 'TRG-780-RED']);
+
+        $sent = Http::recorded();
+        [$patch] = $sent[0];
+        [$delete] = $sent[1];
+
+        $this->assertSame('PATCH', $patch->method());
+        $this->assertSame('/v2/variations', $this->pathOf($patch));
+        $this->assertSame(['IGNORE'], $this->queryOf($patch)['on_missing']);
+        $this->assertSame([['id' => 'TRG-780-BLK', 'data' => ['in_stock' => false]]], $patch->data()['variations']);
+
+        $this->assertSame('DELETE', $delete->method());
+        $this->assertSame([['id' => 'TRG-780-BLK'], ['id' => 'TRG-780-RED']], $delete->data()['variations']);
+    }
+
+    public function test_variations_are_sent_in_batches(): void
+    {
+        $this->reconfigure(['constructor.catalog.batch_size' => 2]);
+        Http::fake(['*' => Http::response(['task_id' => 1, 'task_status_path' => '/v1/tasks/1'])]);
+
+        $results = $this->catalog()->upsertVariations([
+            ['id' => 'v1', 'item_id' => 'i'], ['id' => 'v2', 'item_id' => 'i'], ['id' => 'v3', 'item_id' => 'i'],
+        ]);
+
+        $this->assertCount(2, $results);
+        Http::assertSentCount(2);
+    }
+
+    public function test_get_and_list_variations(): void
+    {
+        Http::fake([
+            '*/v2/variations/TRG%2F780-BLK*' => Http::response(['id' => 'TRG/780-BLK', 'item_id' => 'TRG/780']),
+            '*/v2/variations/missing*' => Http::response(['message' => 'Not found'], 404),
+            '*/v2/variations?*' => Http::response(['variations' => [['id' => 'v1', 'item_id' => 'TRG-780']], 'total_count' => 1]),
+        ]);
+
+        $this->assertSame('TRG/780', $this->catalog()->getVariation('TRG/780-BLK')['item_id']);
+        $this->assertNull($this->catalog()->getVariation('missing'));
+
+        $page = $this->catalog()->listVariations('Products', ['item_ids' => ['TRG-780', 'TRG-575'], 'per_page' => 50, 'page' => 2]);
+
+        $this->assertSame('v1', $page['variations'][0]['id']);
+        $this->assertSame(1, $page['total_count']);
+        $this->assertNull($page['next_page_cursor']);
+
+        Http::assertSent(function (Request $request) {
+            if ($this->pathOf($request) !== '/v2/variations') {
+                return false;
+            }
+
+            $query = $this->queryOf($request);
+            $this->assertSame(['TRG-780', 'TRG-575'], $query['item_id']);
+            $this->assertSame(['50'], $query['num_results_per_page']);
+            $this->assertSame(['2'], $query['page']);
+            $this->assertSame(['Products'], $query['section']);
+
+            return true;
+        });
+    }
+
+    public function test_upsert_item_groups_sends_no_section_and_keeps_parent_ids(): void
+    {
+        Http::fake(['*' => Http::response(['task_id' => 11, 'task_status_path' => '/v1/tasks/11'])]);
+
+        $this->catalog()->upsertItemGroups([
+            ['id' => 'grills', 'name' => 'Grills'],
+            ['id' => 'pellet-grills', 'name' => 'Pellet Grills', 'parent_ids' => 'grills', 'image_url' => '/img/pellet.jpg'],
+        ], ['force' => true]);
+
+        Http::assertSent(function (Request $request) {
+            $query = $this->queryOf($request);
+
+            $this->assertSame('PUT', $request->method());
+            $this->assertSame('/v2/item_groups', $this->pathOf($request));
+            $this->assertBasicAuthWithApiToken($request);
+            // Item groups belong to the whole index; the endpoint has no section parameter.
+            $this->assertArrayNotHasKey('section', $query);
+            $this->assertSame(['true'], $query['force']);
+            $this->assertSame([
+                ['id' => 'grills', 'name' => 'Grills'],
+                ['id' => 'pellet-grills', 'name' => 'Pellet Grills', 'parent_ids' => ['grills'], 'data' => ['image_url' => '/img/pellet.jpg']],
+            ], $request->data()['item_groups']);
+
+            return true;
+        });
+    }
+
+    public function test_upsert_item_groups_requires_a_name(): void
+    {
+        Http::fake();
+
+        $this->expectException(InvalidCatalogDataException::class);
+        $this->expectExceptionMessage('Item group "grills" needs a non-empty "name"');
+
+        $this->catalog()->upsertItemGroups([['id' => 'grills']]);
+    }
+
+    public function test_patch_item_groups_only_needs_an_id_and_sends_no_on_missing(): void
+    {
+        Http::fake(['*' => Http::response(['task_id' => 12, 'task_status_path' => '/v1/tasks/12'])]);
+
+        // An empty parent list moves the group to the top of the tree, so it is kept.
+        $this->catalog()->patchItemGroups([['id' => 'pellet-grills', 'parent_ids' => []]], ['on_missing' => 'CREATE']);
+        $this->catalog()->deleteItemGroups(['old-category']);
+
+        [$patch] = Http::recorded()[0];
+        [$delete] = Http::recorded()[1];
+
+        $this->assertSame('PATCH', $patch->method());
+        $this->assertArrayNotHasKey('on_missing', $this->queryOf($patch));
+        $this->assertArrayNotHasKey('section', $this->queryOf($patch));
+        $this->assertSame([['id' => 'pellet-grills', 'parent_ids' => []]], $patch->data()['item_groups']);
+
+        $this->assertSame('DELETE', $delete->method());
+        $this->assertSame('/v2/item_groups', $this->pathOf($delete));
+        $this->assertSame([['id' => 'old-category']], $delete->data()['item_groups']);
+    }
+
+    public function test_get_and_list_item_groups(): void
+    {
+        Http::fake([
+            '*/v2/item_groups/grills%2Fgas*' => Http::response(['id' => 'grills/gas', 'name' => 'Gas Grills', 'parent_ids' => ['grills']]),
+            '*/v2/item_groups/missing*' => Http::response(['message' => 'Not found'], 404),
+            '*/v2/item_groups?*' => Http::response(['item_groups' => [['id' => 'grills', 'name' => 'Grills']], 'total_count' => 1]),
+        ]);
+
+        $this->assertSame('Gas Grills', $this->catalog()->getItemGroup('grills/gas')['name']);
+        $this->assertNull($this->catalog()->getItemGroup('missing'));
+
+        $page = $this->catalog()->listItemGroups(['ids' => ['grills'], 'per_page' => 5000, 'next_page_cursor' => 'ignored']);
+
+        $this->assertSame(['item_groups' => [['id' => 'grills', 'name' => 'Grills']], 'total_count' => 1], $page);
+
+        Http::assertSent(function (Request $request) {
+            if ($this->pathOf($request) !== '/v2/item_groups') {
+                return false;
+            }
+
+            $query = $this->queryOf($request);
+            $this->assertSame(['grills'], $query['id']);
+            $this->assertSame(['1000'], $query['num_results_per_page']);
+            $this->assertArrayNotHasKey('section', $query);
+            // Item groups have no cursor pagination.
+            $this->assertArrayNotHasKey('next_page_cursor', $query);
+
+            return true;
+        });
+    }
+
+    public function test_item_group_writes_are_not_retried(): void
+    {
+        Http::fake(['*' => Http::response('unavailable', 503)]);
+
+        try {
+            $this->catalog()->upsertItemGroups([['id' => 'grills', 'name' => 'Grills']]);
+            $this->fail('Expected ApiException');
+        } catch (ApiException $e) {
+            $this->assertSame(503, $e->getStatusCode());
+        }
+
+        Http::assertSentCount(1);
+    }
+
     public function test_a_task_without_a_status_times_out_cleanly(): void
     {
         Sleep::fake();

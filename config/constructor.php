@@ -75,6 +75,11 @@ return [
 
     'agent_base_url' => env('CONSTRUCTOR_AGENT_BASE_URL', 'https://agent.cnstrc.com'),
 
+    // The Catalog Batching Service, for frequent small item and variation
+    // updates (Constructor::catalogBatching()).
+    // @see https://docs.constructor.com/reference/v2-batching-items-update-items
+    'catalog_batching_base_url' => env('CONSTRUCTOR_CATALOG_BATCHING_BASE_URL', 'https://batching.catalog.cnstrc.com'),
+
     /*
     |--------------------------------------------------------------------------
     | Default Section
@@ -216,7 +221,8 @@ return [
     |                     Several addresses can be comma-separated.
     | force               Process uploads even if they would remove a large
     |                     share of the catalog (Constructor's safety check).
-    | batch_size          Items sent per /v2/items request (max 10,000).
+    | batch_size          Records sent per /v2/items, /v2/variations or
+    |                     /v2/item_groups request (max 10,000).
     | upload_timeout      Seconds to allow a catalog file upload to take.
     | task_poll_interval  Seconds between task status checks.
     | task_timeout        Seconds to wait for a task before giving up.

@@ -8,6 +8,7 @@ use ConstructorIO\Laravel\DataTransferObjects\AutocompleteResults;
 use ConstructorIO\Laravel\DataTransferObjects\RecommendationResults;
 use ConstructorIO\Laravel\DataTransferObjects\SearchResults;
 use ConstructorIO\Laravel\Services\AgentService;
+use ConstructorIO\Laravel\Services\CatalogBatchingService;
 use ConstructorIO\Laravel\Services\CatalogService;
 use ConstructorIO\Laravel\Services\RecommendationService;
 use ConstructorIO\Laravel\Services\SearchService;
@@ -36,6 +37,7 @@ class Constructor implements SearchProvider
         protected readonly RecommendationService $recommendations,
         protected readonly AgentService $agent,
         protected readonly CatalogService $catalog,
+        protected readonly CatalogBatchingService $catalogBatching,
     ) {}
 
     /*
@@ -63,11 +65,21 @@ class Constructor implements SearchProvider
     }
 
     /**
-     * Catalog uploads, item updates and task status. Requires CONSTRUCTOR_API_TOKEN.
+     * Catalog uploads, items, variations, item groups and task status.
+     * Requires CONSTRUCTOR_API_TOKEN.
      */
     public function catalog(): CatalogService
     {
         return $this->catalog;
+    }
+
+    /**
+     * The Catalog Batching Service, for frequent small item and variation
+     * updates (price, stock). Requires CONSTRUCTOR_API_TOKEN.
+     */
+    public function catalogBatching(): CatalogBatchingService
+    {
+        return $this->catalogBatching;
     }
 
     /*

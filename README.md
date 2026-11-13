@@ -288,9 +288,31 @@ $catalog->upsertItems([['id' => 'TRG-780', 'name' => 'Pro 780', 'data' => ['pric
 $catalog->patchItems([['id' => 'TRG-780', 'data' => ['price' => 899]]]);
 $catalog->deleteItems(['OLD-SKU-1']);
 $catalog->getItem('TRG-780');
+
+// Variations (each names its parent item) and item groups (the category tree)
+$catalog->upsertVariations([['id' => 'TRG-780-LP', 'item_id' => 'TRG-780', 'fuel_type' => 'Propane']]);
+$catalog->upsertItemGroups([['id' => 'pellet-grills', 'name' => 'Pellet Grills', 'parent_ids' => ['grills']]]);
+$catalog->listVariations(options: ['item_ids' => ['TRG-780']]);
+$catalog->getItemGroup('pellet-grills');
 ```
 
+Variations have the same methods as items (`upsertVariations`, `patchVariations`, `deleteVariations`, `getVariation`, `listVariations`), and so do item groups (`upsertItemGroups`, `patchItemGroups`, `deleteItemGroups`, `getItemGroup`, `listItemGroups`). Item groups belong to the whole index, so they take no section.
+
 Large uploads can take minutes, so run them from a queued job. See [Catalog management](https://docs.constructor.com/reference/v1-catalog-create-or-replace-catalog).
+
+#### Frequent small updates: the Catalog Batching Service
+
+For prices and stock that change many times a minute, use [Constructor's Catalog Batching Service](https://docs.constructor.com/reference/v2-batching-items-update-items). It doesn't start a task per request, and creates records that don't exist yet:
+
+```php
+$batching = Constructor::catalogBatching();
+
+$batching->patchItems([['id' => 'TRG-780', 'name' => 'Pro 780', 'price' => 899]]);   // id and name required
+$batching->patchVariations([['id' => 'TRG-780-LP', 'item_id' => 'TRG-780', 'in_stock' => false]]);
+$batching->deleteItems(['OLD-SKU-1']);   // returns ['accepted' => 1, 'responses' => [...]]
+```
+
+Lists are sent 100 records per request (the service's limit). Requests go to `CONSTRUCTOR_CATALOG_BATCHING_BASE_URL` (default `https://batching.catalog.cnstrc.com`) with your API token, and are never retried automatically: on a `RateLimitException`, back off and resend.
 
 ### Laravel Scout
 
@@ -388,7 +410,8 @@ Every setting is documented in [`config/constructor.php`](config/constructor.php
 | `CONSTRUCTOR_THROW_EXCEPTIONS` | `false` | Throw on storefront failures |
 | `CONSTRUCTOR_LOG_CHANNEL` | default | Where failures are logged |
 | `CONSTRUCTOR_NOTIFICATION_EMAIL` | | Catalog failure notifications |
-| `CONSTRUCTOR_CATALOG_BATCH_SIZE` | `1000` | Items per `/v2/items` request (max 10,000) |
+| `CONSTRUCTOR_CATALOG_BATCH_SIZE` | `1000` | Records per `/v2/items`, `/v2/variations` or `/v2/item_groups` request (max 10,000) |
+| `CONSTRUCTOR_CATALOG_BATCHING_BASE_URL` | `https://batching.catalog.cnstrc.com` | Catalog Batching Service host |
 | `CONSTRUCTOR_SCOUT_SYNC_MODE` | `replace` | `replace` or `patch` model saves |
 
 ## Upgrading from 1.x

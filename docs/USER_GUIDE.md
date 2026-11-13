@@ -1423,7 +1423,7 @@ The final status check happens at the deadline, so a task that finishes in the l
 
 ### Update individual items
 
-For small, frequent changes (price, stock), use the items API instead of files:
+For targeted changes to specific products, use the items API instead of files. (For a constant stream of small changes, see [the Catalog Batching Service](#high-frequency-updates-the-catalog-batching-service).)
 
 ```php
 // Create or fully replace items. id and name are required.
@@ -1465,6 +1465,95 @@ $some = $catalog->listItems(options: ['ids' => ['TRG-PRO780', 'WEB-SPIRIT-E310']
 ```
 
 For very large catalogs, walk with `next_page_cursor` instead of `page`.
+
+### Variations
+
+[Variations API reference](https://docs.constructor.com/reference/v2-variations-create-or-replace-variations)
+
+Variations are the purchasable versions of an item: fuel types, sizes, colors. They work like items, and each one names its parent item with `item_id`:
+
+```php
+// Create or fully replace. id and item_id are required; name is optional.
+$catalog->upsertVariations([
+    ['id' => 'TRG-PRO780-LP', 'item_id' => 'TRG-PRO780', 'fuel_type' => 'Propane', 'price' => 999.99],
+    ['id' => 'TRG-PRO780-NG', 'item_id' => 'TRG-PRO780', 'fuel_type' => 'Natural Gas', 'price' => 1049.99],
+]);
+
+// Update fields of existing variations. Only id is required.
+$catalog->patchVariations([['id' => 'TRG-PRO780-NG', 'in_stock' => false]]);
+
+$catalog->deleteVariations(['TRG-PRO780-OLD']);   // the parent item stays
+
+$variation = $catalog->getVariation('TRG-PRO780-LP');                    // null if it doesn't exist
+$page = $catalog->listVariations(options: ['item_ids' => ['TRG-PRO780']]);
+// ['variations' => [...], 'total_count' => 2, 'next_page_cursor' => null]
+```
+
+The methods take the same `$section` and `$options` as their item equivalents (`force`, `notification_email`; `on_missing` for `patchVariations`), are batched the same way, and return one task result per batch. `listVariations()` also accepts `ids`, `page`, `per_page` (up to 1,000) and `next_page_cursor`.
+
+### Item groups (categories)
+
+[Item groups API reference](https://docs.constructor.com/reference/v2-item-groups-create-or-replace-item-groups)
+
+Item groups are your category tree. Items join a group by listing its ID in `data.group_ids`, and category pages browse by that ID (`Constructor::browse('group_id', 'pellet-grills')`). Item groups belong to the whole index, so these methods take no `$section`.
+
+```php
+// Create or fully replace. id and name are required; parent_ids places the group in the tree.
+$catalog->upsertItemGroups([
+    ['id' => 'grills', 'name' => 'Grills'],
+    ['id' => 'pellet-grills', 'name' => 'Pellet Grills', 'parent_ids' => ['grills'], 'image_url' => '/img/cat/pellet.jpg'],
+]);
+
+// Rename or move an existing group. Only id is required.
+$catalog->patchItemGroups([['id' => 'pellet-grills', 'name' => 'Pellet Grills & Smokers']]);
+
+$catalog->deleteItemGroups(['clearance-2024']);
+
+$group = $catalog->getItemGroup('pellet-grills');   // ['id', 'name', 'parent_ids', 'data'] or null
+$page = $catalog->listItemGroups(['per_page' => 1000]);
+// ['item_groups' => [...], 'total_count' => 84]
+```
+
+- Fields other than `id`, `name` and `parent_ids` are moved into `data`, which Constructor limits to 5 kB per group.
+- `patchItemGroups()` can't create groups: Constructor fails the whole task if one doesn't exist. Use `upsertItemGroups()` for new groups.
+- `listItemGroups()` takes `ids`, `page` and `per_page` (Constructor's default is 20, maximum 1,000). It has no cursor.
+
+To read the tree as shoppers see it (with item counts), use `Constructor::getBrowseGroups()` instead; these methods return the catalog records.
+
+### High-frequency updates: the Catalog Batching Service
+
+[Catalog Batching Service reference](https://docs.constructor.com/reference/v2-batching-items-update-items)
+
+When prices or stock levels change many times a minute (from an ERP, an inventory feed or a queue listener), send them to Constructor's Catalog Batching Service. It accepts small requests without starting a task for each, so there is nothing to poll.
+
+```php
+$batching = Constructor::catalogBatching();
+
+// Update items, creating any that don't exist. id and name are required on every item.
+$result = $batching->patchItems([
+    ['id' => 'TRG-PRO780', 'name' => 'Traeger Pro 780 Pellet Grill', 'price' => 899.99, 'in_stock' => true],
+]);
+$result['accepted'];   // how many records Constructor accepted
+
+// Update variations, creating any that don't exist. id and item_id are required.
+$batching->patchVariations([['id' => 'TRG-PRO780-NG', 'item_id' => 'TRG-PRO780', 'in_stock' => false]]);
+
+$batching->deleteItems(['DISCONTINUED-1']);
+$batching->deleteVariations(['TRG-PRO780-OLD']);
+```
+
+| | `Constructor::catalog()` | `Constructor::catalogBatching()` |
+|---|---|---|
+| Host | `ac.cnstrc.com` | `batching.catalog.cnstrc.com` (`CONSTRUCTOR_CATALOG_BATCHING_BASE_URL`) |
+| Records per request | up to 10,000 | up to 100 (longer lists are split for you) |
+| Result | a task per batch, to poll | `accepted` count; no task |
+| Missing records on update | `on_missing`: `FAIL`, `IGNORE` or `CREATE` | always created |
+| Item updates need | `id` | `id` and `name` |
+| Item groups | yes | no |
+
+- Both use `CONSTRUCTOR_API_TOKEN` and take an optional `$section` (default `CONSTRUCTOR_SECTION`).
+- Requests are never retried automatically. A `RateLimitException` (429) means you are sending too fast: back off and send the same records again, for example by releasing a queued job with a delay.
+- If one request of a long list fails, the exception is thrown and the rest aren't sent. Earlier requests were already accepted, so resending the whole list is safe.
 
 ### A nightly sync job
 
@@ -1782,7 +1871,7 @@ Only failures that might succeed on a second try are retried: connection errors,
 | `CONSTRUCTOR_TIMEOUT` | 10 | Seconds for a normal request |
 | `CONSTRUCTOR_STREAM_TIMEOUT` | 120 | Total seconds for a streaming agent response, including keep-alive pings |
 
-`CONSTRUCTOR_SEARCH_BASE_URL` and `CONSTRUCTOR_AGENT_BASE_URL` must use `https://`, because requests carry secret tokens. Plain `http://` is accepted only for `localhost` (for a local mock server); anything else throws `ConfigurationException`.
+`CONSTRUCTOR_SEARCH_BASE_URL`, `CONSTRUCTOR_AGENT_BASE_URL` and `CONSTRUCTOR_CATALOG_BATCHING_BASE_URL` must use `https://`, because requests carry secret tokens. Plain `http://` is accepted only for `localhost` (for a local mock server); anything else throws `ConfigurationException`.
 
 ---
 

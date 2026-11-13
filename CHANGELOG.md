@@ -39,6 +39,9 @@ A full review against Constructor's API reference and backend-integration docume
 - Sponsored Listings support: `is_sponsored`, `sponsored_campaign_id`, `sponsored_campaign_owner` on products.
 - `SearchResults::trackingData()` for the beacon's `cnstrc-data` script tag; `resultId` on `AutocompleteResults`; `relatedBrowsePages`; `variation_slice`; collection `active_overriding_collection`; task `indexed`.
 - `catalog.batch_size`, `scout.sync_mode` (replace or patch), `identity.require_consent`.
+- Variations API: `upsertVariations()`, `patchVariations()`, `deleteVariations()`, `getVariation()`, `listVariations()` (`/v2/variations`).
+- Item groups (categories) API: `upsertItemGroups()`, `patchItemGroups()`, `deleteItemGroups()`, `getItemGroup()`, `listItemGroups()` (`/v2/item_groups`).
+- Catalog Batching Service for frequent small updates: `Constructor::catalogBatching()` with `patchItems()`, `deleteItems()`, `patchVariations()`, `deleteVariations()`, and the `catalog_batching_base_url` setting.
 - Test suite (PHPUnit + Testbench), Pint, Larastan and GitHub Actions CI.
 - `AGENTS.md`, `CLAUDE.md`, the Constructor docs MCP server, Claude Code skills, a review subagent, CONTRIBUTING and SECURITY.
 - Laravel 13 support. The Scout engine requires Scout 11.
