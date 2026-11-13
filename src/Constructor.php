@@ -9,8 +9,10 @@ use ConstructorIO\Laravel\DataTransferObjects\RecommendationPageResults;
 use ConstructorIO\Laravel\DataTransferObjects\RecommendationResults;
 use ConstructorIO\Laravel\DataTransferObjects\SearchResults;
 use ConstructorIO\Laravel\Services\AgentService;
+use ConstructorIO\Laravel\Services\BehaviorService;
 use ConstructorIO\Laravel\Services\CatalogBatchingService;
 use ConstructorIO\Laravel\Services\CatalogService;
+use ConstructorIO\Laravel\Services\QuizService;
 use ConstructorIO\Laravel\Services\RecommendationService;
 use ConstructorIO\Laravel\Services\SearchService;
 use ConstructorIO\Laravel\Support\RequestContext;
@@ -20,13 +22,15 @@ use Illuminate\Http\Request;
  * The package's entry point, and what the Constructor facade resolves to.
  *
  * Storefront methods (search, browse, autocomplete, recommendations...) are
- * available directly. The AI agents and catalog management have their own
- * services:
+ * available directly. The AI agents, quizzes, catalog management and
+ * offline behavioral actions have their own services:
  *
  *     Constructor::search('pellet grill');
  *     Constructor::getRecommendations('home-bestsellers');
  *     Constructor::agent()->askShoppingAgent('A grill for a small balcony');
  *     Constructor::catalog()->uploadCatalog(storage_path('catalog/items.jsonl'));
+ *     Constructor::quizzes()->getNextQuestion('grill-finder');
+ *     Constructor::behavior()->recordOfflinePurchases($storeSales);
  *
  * Each method here only delegates, so its full documentation lives on the
  * service it calls.
@@ -39,6 +43,8 @@ class Constructor implements SearchProvider
         protected readonly AgentService $agent,
         protected readonly CatalogService $catalog,
         protected readonly CatalogBatchingService $catalogBatching,
+        protected readonly QuizService $quizzes,
+        protected readonly BehaviorService $behavior,
     ) {}
 
     /*
@@ -81,6 +87,22 @@ class Constructor implements SearchProvider
     public function catalogBatching(): CatalogBatchingService
     {
         return $this->catalogBatching;
+    }
+
+    /**
+     * Quizzes: next question, results and results page settings.
+     */
+    public function quizzes(): QuizService
+    {
+        return $this->quizzes;
+    }
+
+    /**
+     * Offline purchases and returns (in store, by phone). Requires CONSTRUCTOR_API_TOKEN.
+     */
+    public function behavior(): BehaviorService
+    {
+        return $this->behavior;
     }
 
     /*

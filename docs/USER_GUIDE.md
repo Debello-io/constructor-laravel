@@ -19,11 +19,12 @@ If you are upgrading from 1.x, read [UPGRADE.md](../UPGRADE.md) first.
 11. [Behavioral tracking](#11-behavioral-tracking)
 12. [Catalog management](#12-catalog-management)
 13. [Recipes](#13-recipes)
-14. [Laravel Scout](#14-laravel-scout)
-15. [DTO reference](#15-dto-reference)
-16. [Error handling](#16-error-handling)
-17. [Testing your integration](#17-testing-your-integration)
-18. [Troubleshooting](#18-troubleshooting)
+14. [Quizzes](#14-quizzes)
+15. [Laravel Scout](#15-laravel-scout)
+16. [DTO reference](#16-dto-reference)
+17. [Error handling](#17-error-handling)
+18. [Testing your integration](#18-testing-your-integration)
+19. [Troubleshooting](#19-troubleshooting)
 
 ---
 
@@ -89,7 +90,7 @@ php artisan tinker
 => true
 ```
 
-If search returns 0 and you expected results, see [Troubleshooting](#18-troubleshooting). By default, failed storefront calls are logged and return empty results, so check `storage/logs/laravel.log`.
+If search returns 0 and you expected results, see [Troubleshooting](#19-troubleshooting). By default, failed storefront calls are logged and return empty results, so check `storage/logs/laravel.log`.
 
 ---
 
@@ -104,7 +105,7 @@ Constructor uses three different credentials. They are **not** interchangeable.
 | Setting | What it is | Used for |
 |---------|------------|----------|
 | `CONSTRUCTOR_API_KEY` | Public index key (`key_...`) | Every request, as the `key` parameter |
-| `CONSTRUCTOR_API_TOKEN` | Secret API token from the dashboard (Integration > API Integration) | Catalog management only: uploads, `/v2/items`, tasks. Sent with HTTP Basic auth. |
+| `CONSTRUCTOR_API_TOKEN` | Secret API token from the dashboard (Integration > API Integration) | Only catalog management (uploads, `/v2/items`, tasks) and offline behavioral actions. Sent with HTTP Basic auth. |
 | `CONSTRUCTOR_BACKEND_TOKEN` | Secret backend **security token** that Constructor gives you | Search, browse, autocomplete, recommendations and agent requests, as the `x-cnstrc-token` header |
 
 The backend token is how Constructor recognises that requests from your server's IP are legitimate. Without it, Constructor is likely to throttle your traffic (HTTP 429), because thousands of shoppers appear to come from one IP address. Ask your Constructor contact for it.
@@ -306,7 +307,7 @@ Before going live:
 
 ### Entry point and services
 
-`Constructor` (the facade) is the entry point. Storefront methods are available directly. The AI agents and catalog management have their own services:
+`Constructor` (the facade) is the entry point. Storefront methods are available directly. The AI agents, quizzes, catalog management and offline behavioral actions have their own services:
 
 ```php
 use ConstructorIO\Laravel\Facades\Constructor;
@@ -315,6 +316,8 @@ Constructor::search('smoker');                    // SearchService
 Constructor::getRecommendations('home-bestsellers'); // RecommendationService
 Constructor::agent()->askShoppingAgent('...');    // AgentService
 Constructor::catalog()->uploadCatalog('...');     // CatalogService
+Constructor::quizzes()->getNextQuestion('...');   // QuizService
+Constructor::behavior()->recordOfflinePurchases([...]); // BehaviorService
 ```
 
 | Service | Responsibility |
@@ -323,6 +326,8 @@ Constructor::catalog()->uploadCatalog('...');     // CatalogService
 | `Services\RecommendationService` | Recommendation pods |
 | `Services\AgentService` | AI Shopping Agent and Product Insights Agent |
 | `Services\CatalogService` | Catalog uploads, item updates, task status (uses the API token) |
+| `Services\QuizService` | Quiz questions, results and results page settings |
+| `Services\BehaviorService` | Offline purchases and returns (uses the API token) |
 | `Scout\ConstructorEngine` | The `constructor` Laravel Scout driver |
 
 You can also inject the services, or the `Contracts\SearchProvider` interface, which the `Constructor` class implements:
@@ -434,7 +439,7 @@ If you use a third-party retail media platform through Constructor, its tracking
 
 ### Return types
 
-Storefront methods return readonly DTOs: `SearchResults`, `AutocompleteResults` and `RecommendationResults`. All three have `toArray()` for JSON responses. See [DTO reference](#15-dto-reference).
+Storefront methods return readonly DTOs: `SearchResults`, `AutocompleteResults` and `RecommendationResults`, plus `QuizQuestion` and `QuizResults` for quizzes. All of them have `toArray()` for JSON responses. See [DTO reference](#16-dto-reference).
 
 ---
 
@@ -1392,9 +1397,66 @@ What the server side must do:
 
 For AI agent results, track agent views and clicks with the JavaScript client's `trackAgent*` methods, using the `intent_result_id` and per-product `result_id` returned by `askShoppingAgent()`.
 
-Constructor also has an API for events that happen offline, such as in-store purchases: `POST /v1/offline_behavioral_actions`. This package does not wrap it. Call it from a queued job if you need it, and check the [Behavioral tracking](https://docs.constructor.com/docs/integrating-with-constructor-behavioral-tracking) documentation for the payload.
-
 To check your tracking, compare, for one shopper, the client ID in a results request with the client ID in the beacon's events, and confirm the `result_id` in a results-loaded event matches the one in the response.
+
+### Offline purchases and returns
+
+[Offline behavioral actions API reference](https://docs.constructor.com/reference/v1-offline-behavioral-actions-create-actions)
+
+Purchases and returns that happen away from the website (in store, by phone, through a sales rep) never reach the beacon. Send them with `BehaviorService` so Constructor learns from them too. Like catalog management, this endpoint uses `CONSTRUCTOR_API_TOKEN`, so call it from a queued job or a scheduled command.
+
+```php
+$behavior = Constructor::behavior();
+
+$behavior->recordOfflinePurchases([[
+    'order_id' => 'POS-10293',                  // recommended: events with the same order ID are merged
+    'occurred_at' => $sale->completed_at,       // DateTimeInterface, date string, or `_dt` in Unix seconds (required)
+    'user_id' => $sale->customer_id,            // the `ui` your website sends for this customer
+    'store_id' => 'austin-tx',
+    'items' => [                                // 1-500 items; item_id or item_name is required
+        ['item_id' => 'TRG-780', 'price' => 999.99, 'count' => 1],
+        ['item_id' => 'PELLETS-HICKORY', 'variation_id' => 'PELLETS-HICKORY-20LB', 'price' => 19.99, 'count' => 3],
+    ],
+]]);
+
+$behavior->recordOfflineReturns([[
+    'order_id' => 'POS-10293',
+    'occurred_at' => now(),
+    'items_returned' => [['item_id' => 'PELLETS-HICKORY', 'count' => 1]],   // required
+    'items_kept' => [['item_id' => 'TRG-780']],
+    'return_type' => 'partial',                 // full | partial
+    'return_preference' => 'refund',            // refund | replacement
+    'return_reason' => 'Wrong flavor',
+]]);
+```
+
+Other documented fields: `revenue`, `lat` and `lon` on purchases; `items_cross_sold`, `revenue`, `return_expenses`, `refund`, `return_shipping_cost`, `return_drop_off`, `lat` and `lon` on returns. `recordOfflineActions()` accepts a mix of both as `['action' => 'purchase'|'return', 'data' => [...]]`.
+
+- **Validation first.** Every action is checked (time, item lists, enum values) before anything is sent. A mistake throws `InvalidArgumentException` and nothing is sent.
+- **Batches of 100.** Constructor accepts at most 100 actions per request, so larger lists are split. Requests are never retried. If one fails, the batches before it were already accepted; because events with the same `order_id` are merged, re-sending the whole list is safe when every action has one.
+- **Match `ui`.** If you anonymize user IDs with `Constructor::resolveUserIdUsing()`, hash offline user IDs the same way, or Constructor sees two different people.
+- The methods return the number of actions sent, and throw `ApiException` or `ConnectionException` on failure.
+
+```php
+// A scheduled command that sends yesterday's store sales
+$sales = Sale::query()
+    ->where('channel', 'store')
+    ->whereDate('completed_at', today()->subDay())
+    ->with('lines')
+    ->get();
+
+Constructor::behavior()->recordOfflinePurchases($sales->map(fn (Sale $sale) => [
+    'order_id' => $sale->number,
+    'occurred_at' => $sale->completed_at,
+    'user_id' => $sale->customer_id,
+    'store_id' => $sale->store_code,
+    'items' => $sale->lines->map(fn ($line) => [
+        'item_id' => $line->sku,
+        'price' => (float) $line->unit_price,
+        'count' => $line->quantity,
+    ])->all(),
+])->all());
+```
 
 ---
 
@@ -1699,7 +1761,133 @@ They behave like `search()` and `browse()` with `'section' => 'Recipes'`. Pass a
 
 ---
 
-## 14. Laravel Scout
+## 14. Quizzes
+
+[Quizzes API reference](https://docs.constructor.com/reference/v1-quizzes-get-next-question) · [Question types](https://docs.constructor.com/reference/configuration-quizzes)
+
+A quiz is a guided product finder ("Which grill is right for you?") built in the Constructor dashboard. Your page asks one question at a time, then shows the products that match the answers. Quiz requests go to `CONSTRUCTOR_QUIZZES_BASE_URL` (default `https://quizzes.cnstrc.com`) and carry the shopper's identity like other storefront calls.
+
+```php
+$quizzes = Constructor::quizzes();
+```
+
+### Asking the questions
+
+```php
+$step = $quizzes->getNextQuestion('grill-finder');            // no answers: the first question
+
+$step->question['title'];      // "How do you like to cook?"
+$step->type();                 // single | multiple | open | cover | single_filter_value | multiple_filter_values
+$step->options();              // [['id' => 1, 'value' => 'Charcoal', 'images' => [...]], ...]
+$step->isSkippable();
+$step->quizSessionId;          // keep these two for the rest of the quiz
+$step->quizVersionId;
+```
+
+On each later call, pass **every answer so far**, in order, plus the session and version from the first response:
+
+```php
+$step = $quizzes->getNextQuestion('grill-finder', $answers, [
+    'quiz_session_id' => $sessionId,
+    'quiz_version_id' => $versionId,
+]);
+
+if ($step->isComplete()) {
+    // No more questions: show the results.
+}
+```
+
+Each answer is one of:
+
+| Question type | Answer |
+|---------------|--------|
+| `single`, `single_filter_value` | `[optionId]` |
+| `multiple`, `multiple_filter_values` | `[optionId, optionId, ...]` |
+| A skipped select question | `[]` or `null` |
+| `open` | `true` if the shopper typed something, `false` if they skipped it. The text itself is never sent; Constructor doesn't store it. |
+| `cover` | `QuizService::COVER_PAGE_SEEN` (`'seen'`) |
+
+So `[[1], [3, 4], null, true, 'seen']` is sent as `a=1&a=3,4&a=&a=true&a=seen`.
+
+### Results
+
+```php
+$results = $quizzes->getResults('grill-finder', $answers, ['brand' => 'Traeger'], [
+    'quiz_session_id' => $sessionId,
+    'quiz_version_id' => $versionId,
+    'page' => 1,
+    'per_page' => 12,
+]);
+
+$results->products;            // the same product shape as search results
+$results->total;
+$results->facets;
+$results->filterExpression;    // the filter Constructor built from the answers
+```
+
+`getResults()` needs at least one answer and throws `InvalidArgumentException` otherwise. `getResultsConfig($quizId, ['quiz_version_id' => ...])` returns the results page title, description and answer summary configured in the dashboard.
+
+### Tracking quiz results
+
+Put the quiz IDs and `resultId` on the results container so the beacon can attribute clicks and add-to-carts ([Data-driven event tracking](https://docs.constructor.com/docs/integrating-with-constructor-behavioral-tracking-data-driven-event-tracking)):
+
+```blade
+<div data-cnstrc-quizzes
+     data-cnstrc-quiz-id="{{ $results->quizId }}"
+     data-cnstrc-quiz-version-id="{{ $results->quizVersionId }}"
+     data-cnstrc-quiz-session-id="{{ $results->quizSessionId }}"
+     data-cnstrc-result-id="{{ $results->resultId }}"
+     data-cnstrc-num-results="{{ $results->total }}">
+    @foreach ($results->products as $product)
+        <div data-cnstrc-item-id="{{ $product['id'] }}"
+             data-cnstrc-item-name="{{ $product['name'] }}"
+             @if ($product['variation_id']) data-cnstrc-item-variation-id="{{ $product['variation_id'] }}" @endif
+             @if ($product['price']) data-cnstrc-item-price="{{ $product['price'] }}" @endif>
+            ...
+            <button data-cnstrc-btn="add_to_cart">Add to cart</button>
+        </div>
+    @endforeach
+</div>
+```
+
+### A quiz controller
+
+```php
+use ConstructorIO\Laravel\Facades\Constructor;
+use Illuminate\Http\Request;
+
+class GrillFinderController
+{
+    private const QUIZ_ID = 'grill-finder';
+
+    public function show(Request $request)
+    {
+        // Answers travel in the form as JSON, so the quiz needs no server-side state.
+        $answers = json_decode((string) $request->input('answers', '[]'), true) ?: [];
+        $options = $request->only(['quiz_session_id', 'quiz_version_id']);
+
+        $step = Constructor::quizzes()->getNextQuestion(self::QUIZ_ID, $answers, $options);
+
+        if (! $step->isAvailable()) {
+            return view('quiz.unavailable');
+        }
+
+        if ($step->isComplete()) {
+            return view('quiz.results', [
+                'results' => Constructor::quizzes()->getResults(self::QUIZ_ID, $answers, [], $options + ['per_page' => 12]),
+            ]);
+        }
+
+        return view('quiz.question', ['step' => $step, 'answers' => $answers]);
+    }
+}
+```
+
+When a request fails (and `CONSTRUCTOR_THROW_EXCEPTIONS` is off), `getNextQuestion()` returns a step where both `isAvailable()` and `isComplete()` are false, so an outage never sends shoppers to an empty results page. `getResults()` returns empty results.
+
+---
+
+## 15. Laravel Scout
 
 Install Scout 11 or later and set the driver:
 
@@ -1816,7 +2004,7 @@ For a full initial load of a large catalog, a catalog file upload ([section 12](
 
 ---
 
-## 15. DTO reference
+## 16. DTO reference
 
 ### SearchResults
 
@@ -1898,18 +2086,49 @@ Returned by `getRecommendationPage()`.
 
 Methods: `pod($podId)`, `podsWithResults()`, `isEmpty()`, `hasRecommendations()`, `toArray()`, `RecommendationPageResults::empty($pageId)`.
 
+### QuizQuestion
+
+Returned by `Constructor::quizzes()->getNextQuestion()`.
+
+| Property | Meaning |
+|----------|---------|
+| `quizId` | The quiz |
+| `question` | Constructor's `next_question` (`id`, `title`, `description`, `type`, `images`, `cta_text`, `is_skippable`, `options`, ...), or `null` when every question is answered |
+| `quizVersionId`, `quizSessionId` | Pass back on every later call for this shopper |
+| `totalQuestions` | Questions in the quiz, when reported |
+| `raw` | The full response |
+
+Methods: `isComplete()`, `isAvailable()`, `type()`, `options()`, `isSkippable()`, `toArray()`, `QuizQuestion::unavailable($quizId)`.
+
+### QuizResults
+
+Returned by `Constructor::quizzes()->getResults()`.
+
+| Property | Meaning |
+|----------|---------|
+| `quizId`, `quizVersionId`, `quizSessionId` | For the tracking attributes |
+| `products` | Matching products |
+| `total`, `page`, `perPage` | Paging |
+| `facets` | Facets keyed by name, when returned |
+| `filterExpression` | The filter Constructor built from the answers |
+| `resultId` | Pass to the page for tracking |
+| `metadata` | `request`, `request_id`, `result_id`, `experiments` |
+
+Methods: `isEmpty()`, `hasResults()`, `totalPages()`, `hasMore()`, `toArray()`, `QuizResults::empty($quizId)`.
+
 ---
 
-## 16. Error handling
+## 17. Error handling
 
 ### The policy
 
 | Call | On failure |
 |------|------------|
-| Search, browse, autocomplete, facets, groups, collections, recommendations | Logs a warning and returns an empty result |
+| Search, browse, autocomplete, facets, groups, collections, recommendations, quiz results | Logs a warning and returns an empty result |
+| `getNextQuestion()` (quizzes) | Logs and returns a step where `isAvailable()` is false |
 | `getProductQuestions()` | Logs and returns `['questions' => []]` |
 | Shopping Agent, `askProductQuestion()` | Throws |
-| Catalog management, Scout indexing | Throws |
+| Catalog management, offline behavioral actions, Scout indexing | Throws |
 | Missing configuration (API key, API token, agent domain) | Always throws `ConfigurationException` |
 
 Storefront reads fail gracefully so a brief Constructor outage degrades a page instead of breaking it. To throw instead, for example in tests or to render your own fallback:
@@ -1931,7 +2150,7 @@ All exceptions extend `ConstructorIO\Laravel\Exceptions\ConstructorException`:
 | `ApiException` | Constructor returned an error status. `getStatusCode()`, `getResponseBody()` (the body is never in the message) |
 | `AuthenticationException` (extends `ApiException`) | 401: wrong key or token. 403: the token lacks permission |
 | `RateLimitException` (extends `ApiException`) | 429: throttled. On storefront traffic, usually a missing `CONSTRUCTOR_BACKEND_TOKEN` |
-| `InvalidArgumentException` | An argument Constructor would reject, caught before sending (e.g. more than 100 IDs for `browseItems()`) |
+| `InvalidArgumentException` | An argument Constructor would reject, caught before sending (e.g. more than 100 IDs for `browseItems()`, an offline purchase without a time, quiz results without answers) |
 | `InvalidCatalogDataException` | Catalog data rejected before sending (missing item ID or name, missing file, unknown operation, bad task ID) |
 | `TaskTimeoutException` | A catalog task didn't finish within the timeout |
 
@@ -1962,11 +2181,11 @@ Only failures that might succeed on a second try are retried: connection errors,
 | `CONSTRUCTOR_TIMEOUT` | 10 | Seconds for a normal request |
 | `CONSTRUCTOR_STREAM_TIMEOUT` | 120 | Total seconds for a streaming agent response, including keep-alive pings |
 
-`CONSTRUCTOR_SEARCH_BASE_URL`, `CONSTRUCTOR_AGENT_BASE_URL` and `CONSTRUCTOR_CATALOG_BATCHING_BASE_URL` must use `https://`, because requests carry secret tokens. Plain `http://` is accepted only for `localhost` (for a local mock server); anything else throws `ConfigurationException`.
+`CONSTRUCTOR_SEARCH_BASE_URL`, `CONSTRUCTOR_AGENT_BASE_URL`, `CONSTRUCTOR_QUIZZES_BASE_URL` and `CONSTRUCTOR_CATALOG_BATCHING_BASE_URL` must use `https://`, because requests carry secret tokens. Plain `http://` is accepted only for `localhost` (for a local mock server); anything else throws `ConfigurationException`.
 
 ---
 
-## 17. Testing your integration
+## 18. Testing your integration
 
 ### Mock the facade
 
@@ -2090,7 +2309,7 @@ Tinker runs in the console, so no shopper identity is sent: results are not pers
 
 ---
 
-## 18. Troubleshooting
+## 19. Troubleshooting
 
 ### "CONSTRUCTOR_API_KEY is not set" (or "must be an https URL")
 

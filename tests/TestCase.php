@@ -6,8 +6,10 @@ use ConstructorIO\Laravel\Constructor;
 use ConstructorIO\Laravel\ConstructorServiceProvider;
 use ConstructorIO\Laravel\Http\ApiClient;
 use ConstructorIO\Laravel\Services\AgentService;
+use ConstructorIO\Laravel\Services\BehaviorService;
 use ConstructorIO\Laravel\Services\CatalogBatchingService;
 use ConstructorIO\Laravel\Services\CatalogService;
+use ConstructorIO\Laravel\Services\QuizService;
 use ConstructorIO\Laravel\Services\RecommendationService;
 use ConstructorIO\Laravel\Services\SearchService;
 use ConstructorIO\Laravel\Support\ConstructorConfig;
@@ -77,6 +79,8 @@ abstract class TestCase extends Orchestra
             AgentService::class,
             CatalogService::class,
             CatalogBatchingService::class,
+            QuizService::class,
+            BehaviorService::class,
             Constructor::class,
         ] as $singleton) {
             $this->app->forgetInstance($singleton);

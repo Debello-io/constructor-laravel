@@ -28,9 +28,10 @@ use Throwable;
  *               Public (no API token). Must carry the shopper's identity and
  *               the backend security token. See RequestContext.
  *
- *   Catalog     items, variations, item groups, catalog uploads, tasks and
- *               the Catalog Batching Service. Private. Authenticated with
- *               the API token as the HTTP Basic username, no password.
+ *   Catalog     items, variations, item groups, catalog uploads, tasks,
+ *               offline behavioral actions and the Catalog Batching Service.
+ *               Private. Authenticated with the API token as the HTTP Basic
+ *               username, no password.
  *
  * Every response goes through throwIfFailed(), so callers get the same typed
  * exceptions whichever endpoint they use.

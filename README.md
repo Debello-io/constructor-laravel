@@ -3,7 +3,7 @@
 [![CI](https://github.com/Debello-io/constructor-laravel/actions/workflows/ci.yml/badge.svg)](https://github.com/Debello-io/constructor-laravel/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-A Laravel package for [Constructor](https://constructor.com) product discovery: search, browse, autocomplete, recommendations, the AI Shopping Agent and Product Insights Agent, catalog management, and a Laravel Scout engine.
+A Laravel package for [Constructor](https://constructor.com) product discovery: search, browse, autocomplete, recommendations, quizzes, the AI Shopping Agent and Product Insights Agent, catalog management, offline purchases and returns, and a Laravel Scout engine.
 
 Constructor has official client libraries for JavaScript, Node, Java, Python and .NET, but not PHP. This package calls the REST API directly and handles the **backend-integration requirements** for you: shopper identity, forwarded headers, the security token and the client identifier. Every endpoint and parameter has been checked against the [Constructor API reference](https://docs.constructor.com/reference).
 
@@ -41,7 +41,7 @@ Constructor uses three different credentials. **They are not interchangeable.**
 # Public. Identifies your index. Dashboard: Integration > API Integration.
 CONSTRUCTOR_API_KEY=key_xxxxxxxx
 
-# Secret. Only for catalog management (uploads, items, tasks).
+# Secret. Only for catalog management (uploads, items, tasks) and offline actions.
 CONSTRUCTOR_API_TOKEN=tok_xxxxxxxx
 
 # Secret. The backend "security token" Constructor gives you. It is sent as the
@@ -56,7 +56,7 @@ CONSTRUCTOR_AGENT_DOMAIN=your-agent-domain
 | Credential | Used for | Sent as |
 |---|---|---|
 | API key | Every request | `key` query parameter |
-| API token | Catalog management only | HTTP Basic username |
+| API token | Catalog management and offline behavioral actions only | HTTP Basic username |
 | Backend token | Storefront and agent requests | `x-cnstrc-token` header |
 
 See [Authentication](https://docs.constructor.com/reference/main-authentication) and [Required parameters](https://docs.constructor.com/docs/integrating-with-constructor-direct-api-integration-required-parameters).
@@ -102,7 +102,7 @@ Your part:
 
    <script id="cnstrc-data" type="application/json">@json($results->trackingData())</script>
    ```
-   Browse pages use `data-cnstrc-browse` with `data-cnstrc-filter-name` / `data-cnstrc-filter-value` instead of the search term. Recommendation widgets use `data-cnstrc-recommendations`. See [Data-driven event tracking](https://docs.constructor.com/docs/integrating-with-constructor-behavioral-tracking-data-driven-event-tracking) and the [User Guide](docs/USER_GUIDE.md#behavioral-tracking).
+   Browse pages use `data-cnstrc-browse` with `data-cnstrc-filter-name` / `data-cnstrc-filter-value` instead of the search term. Recommendation widgets use `data-cnstrc-recommendations`. See [Data-driven event tracking](https://docs.constructor.com/docs/integrating-with-constructor-behavioral-tracking-data-driven-event-tracking) and the [User Guide](docs/USER_GUIDE.md#11-behavioral-tracking).
 3. **Configure [trusted proxies](https://laravel.com/docs/requests#configuring-trusted-proxies)** if you're behind a load balancer or CDN. Otherwise every request appears to come from the proxy's IP.
 4. **Respect consent.** If a shopper hasn't consented to personalization, the client ID must be omitted:
    ```php
@@ -292,6 +292,29 @@ $answer['follow_up_questions'];
 $answer['item_results'];                                       // related products
 ```
 
+### Quizzes
+
+Guided product finders built in the Constructor dashboard. Pass every answer so far, plus the session and version IDs from the first response:
+
+```php
+$quizzes = Constructor::quizzes();
+
+$step = $quizzes->getNextQuestion('grill-finder');                  // first question
+$step->question['title'];   $step->type();   $step->options();
+
+$step = $quizzes->getNextQuestion('grill-finder', [[1], [3, 4]], [  // one entry per answered question
+    'quiz_session_id' => $step->quizSessionId,
+    'quiz_version_id' => $step->quizVersionId,
+]);
+
+if ($step->isComplete()) {
+    $results = $quizzes->getResults('grill-finder', [[1], [3, 4]], [], ['quiz_session_id' => $step->quizSessionId]);
+    $results->products;   $results->resultId;
+}
+```
+
+Select answers are lists of option IDs (`[]` for skipped), open-text answers are `true`/`false` (the text is never sent), and cover pages take `QuizService::COVER_PAGE_SEEN`. Mark up the results with `data-cnstrc-quizzes`, `data-cnstrc-quiz-id`, `data-cnstrc-quiz-version-id`, `data-cnstrc-quiz-session-id` and `data-cnstrc-result-id`. See [Quizzes](https://docs.constructor.com/reference/v1-quizzes-get-next-question) and the [User Guide](docs/USER_GUIDE.md#14-quizzes).
+
 ### Catalog management
 
 Requires `CONSTRUCTOR_API_TOKEN`.
@@ -344,6 +367,29 @@ $batching->deleteItems(['OLD-SKU-1']);   // returns ['accepted' => 1, 'responses
 
 Lists are sent 100 records per request (the service's limit). Requests go to `CONSTRUCTOR_CATALOG_BATCHING_BASE_URL` (default `https://batching.catalog.cnstrc.com`) with your API token, and are never retried automatically: on a `RateLimitException`, back off and resend.
 
+### Offline purchases and returns
+
+In-store and phone orders never reach the beacon. Send them so Constructor learns from them too. Requires `CONSTRUCTOR_API_TOKEN`; run it from a queued job or scheduled command.
+
+```php
+Constructor::behavior()->recordOfflinePurchases([[
+    'order_id' => 'POS-10293',            // events with the same order ID are merged
+    'occurred_at' => $sale->completed_at, // required
+    'user_id' => $sale->customer_id,      // the same `ui` your website sends
+    'store_id' => 'austin-tx',
+    'items' => [['item_id' => 'TRG-780', 'price' => 999.99, 'count' => 1]],
+]]);
+
+Constructor::behavior()->recordOfflineReturns([[
+    'order_id' => 'POS-10293',
+    'occurred_at' => now(),
+    'items_returned' => [['item_id' => 'TRG-780']],
+    'return_type' => 'full',
+]]);
+```
+
+Actions are validated before anything is sent and posted in batches of 100 (Constructor's limit); writes are never retried. See [Offline behavioral actions](https://docs.constructor.com/reference/v1-offline-behavioral-actions-create-actions).
+
 ### Laravel Scout
 
 ```env
@@ -390,8 +436,8 @@ Requires Laravel Scout 11. The item ID is the model's Scout key. Without `Constr
 
 | Call | On failure |
 |---|---|
-| Search, browse, autocomplete, recommendations, facets, groups, collections | Logs a warning and returns an empty result, so a page still renders. Set `CONSTRUCTOR_THROW_EXCEPTIONS=true` to throw instead. |
-| AI agents, catalog management, Scout indexing | Throws. |
+| Search, browse, autocomplete, recommendations, facets, groups, collections, quizzes | Logs a warning and returns an empty result (for `getNextQuestion()`, a step where `isAvailable()` is false), so a page still renders. Set `CONSTRUCTOR_THROW_EXCEPTIONS=true` to throw instead. |
+| AI agents, catalog management, offline behavioral actions, Scout indexing | Throws. |
 | Missing API key, token or agent domain | Always throws `ConfigurationException`. |
 
 Every exception extends `ConstructorIO\Laravel\Exceptions\ConstructorException`:
@@ -443,6 +489,7 @@ Every setting is documented in [`config/constructor.php`](config/constructor.php
 | `CONSTRUCTOR_CATALOG_BATCH_SIZE` | `1000` | Records per `/v2/items`, `/v2/variations` or `/v2/item_groups` request (max 10,000) |
 | `CONSTRUCTOR_CATALOG_BATCHING_BASE_URL` | `https://batching.catalog.cnstrc.com` | Catalog Batching Service host |
 | `CONSTRUCTOR_SCOUT_SYNC_MODE` | `replace` | `replace` or `patch` model saves |
+| `CONSTRUCTOR_QUIZZES_BASE_URL` | `https://quizzes.cnstrc.com` | Quizzes host (https only) |
 
 ## Upgrading from 1.x
 

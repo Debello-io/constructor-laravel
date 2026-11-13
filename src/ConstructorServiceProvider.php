@@ -8,10 +8,12 @@ use ConstructorIO\Laravel\Contracts\SearchProvider;
 use ConstructorIO\Laravel\Http\ApiClient;
 use ConstructorIO\Laravel\Scout\ConstructorEngine;
 use ConstructorIO\Laravel\Services\AgentService;
+use ConstructorIO\Laravel\Services\BehaviorService;
 use ConstructorIO\Laravel\Services\CatalogBatchingService;
 use ConstructorIO\Laravel\Services\CatalogService;
 use ConstructorIO\Laravel\Services\ConstructorAgentService;
 use ConstructorIO\Laravel\Services\ConstructorService;
+use ConstructorIO\Laravel\Services\QuizService;
 use ConstructorIO\Laravel\Services\RecommendationService;
 use ConstructorIO\Laravel\Services\Search\ConstructorSandboxSearch;
 use ConstructorIO\Laravel\Services\SearchService;
@@ -48,6 +50,8 @@ class ConstructorServiceProvider extends ServiceProvider
         $this->app->singleton(AgentService::class);
         $this->app->singleton(CatalogService::class);
         $this->app->singleton(CatalogBatchingService::class);
+        $this->app->singleton(QuizService::class);
+        $this->app->singleton(BehaviorService::class);
         $this->app->singleton(Constructor::class);
 
         $this->app->alias(Constructor::class, SearchProvider::class);
