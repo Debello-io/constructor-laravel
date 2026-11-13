@@ -1076,6 +1076,57 @@ class Recommendations extends Component
 
 If the pod fails or doesn't exist, the result is empty (and logged), so check `$recommendations->hasRecommendations()` in the view.
 
+### Every pod on a page in one request
+
+[Retrieve by page reference](https://docs.constructor.com/reference/v1-recommendations-get-page-results). This endpoint is in **beta**; ask your Constructor contact to enable it.
+
+A recommendation page groups pods in the dashboard, for example a product page with "Similar grills", "Complete your cookout" and "Recently viewed". `getRecommendationPage()` fetches them all at once, and Constructor removes duplicates across the pods, so a product appears in only one of them (unless it is slotted).
+
+```php
+$page = Constructor::getRecommendationPage('pdp', [
+    'item_id' => 'TRG-PRO780',     // shared by every pod on the page
+    'num_results' => 6,            // per pod; omit to use Constructor's default
+    'pod_overrides' => [
+        'pdp-similar' => ['num_results' => 12, 'filters' => ['in_stock' => true]],
+    ],
+]);
+
+$page->title;       // the page's display name
+$page->pageType;    // e.g. "pdp" or "home"
+$page->pods;        // RecommendationResults per pod, in the order set in the dashboard
+$page->pod('pdp-complementary');   // one pod by ID, or null
+$page->podsWithResults();          // skips pods that returned nothing
+```
+
+Every option applies to all pods (`item_id`, `variation_id`, `term`, `filters`, `section`, `user_segments`...), except what you set in `pod_overrides`. A pod override can only set `num_results`, `filters` (and `range_filters`), `filter_match_types`, `pre_filter_expression`, `fmt_options` (and `hidden_fields`) and `variations_map`; anything else throws `InvalidArgumentException` before the request is sent, because Constructor would reject it. An override **replaces** the page-wide value for that pod rather than merging with it, so repeat any page-wide filter the pod still needs.
+
+**Tracking:** each pod is its own recommendations container. Use the pod's `resultId`, not the page's: `$page->resultId` identifies the page request and is not a beacon ID.
+
+```blade
+@foreach ($page->podsWithResults() as $pod)
+    <section data-cnstrc-recommendations
+             data-cnstrc-recommendations-pod-id="{{ $pod->podId }}"
+             data-cnstrc-result-id="{{ $pod->resultId }}"
+             data-cnstrc-num-results="{{ $pod->count() }}"
+             data-cnstrc-recommendations-seed-items="TRG-PRO780">
+        <h2>{{ $pod->title }}</h2>
+        @foreach ($pod->products as $product)
+            <div data-cnstrc-item="recommendation"
+                 data-cnstrc-item-id="{{ $product['id'] }}"
+                 data-cnstrc-item-name="{{ $product['name'] }}"
+                 @if ($product['variation_id']) data-cnstrc-item-variation-id="{{ $product['variation_id'] }}" @endif
+                 data-cnstrc-strategy-id="{{ $product['strategy']['id'] ?? '' }}"
+                 @if ($price = $product['price']) data-cnstrc-item-price="{{ $price }}" @endif>
+                <a href="{{ $product['url'] }}">{{ $product['name'] }}</a>
+                <button type="button" data-cnstrc-btn="add_to_cart">Add to cart</button>
+            </div>
+        @endforeach
+    </section>
+@endforeach
+```
+
+Leave out `data-cnstrc-recommendations-seed-items` for pods whose strategy doesn't use the item (best sellers, recently viewed). If the request fails, you get an empty page (logged), and `$page->isEmpty()` is true.
+
 ---
 
 ## 9. Collections
@@ -1717,6 +1768,21 @@ Returned by `getRecommendations()` and `getItemRecommendations()`.
 | `metadata` | `request`, `request_id`, `result_id`, `pod`, `experiments` |
 
 Methods: `isEmpty()`, `hasRecommendations()`, `count()`, `toArray()`, `RecommendationResults::empty($podId)`.
+
+### RecommendationPageResults
+
+Returned by `getRecommendationPage()`.
+
+| Property | Meaning |
+|----------|---------|
+| `pageId` | The page |
+| `title` | The page's display name |
+| `pageType` | The page's configured type, e.g. `pdp` or `home` |
+| `pods` | One `RecommendationResults` per pod, including empty ones, in page order. Each has its own `resultId` for tracking. |
+| `resultId` | Identifies the page request. Not a beacon ID: track each pod with its own `resultId`. |
+| `metadata` | `request`, `request_id`, `result_id`, `experiments` (also copied to each pod's `metadata`) |
+
+Methods: `pod($podId)`, `podsWithResults()`, `isEmpty()`, `hasRecommendations()`, `toArray()`, `RecommendationPageResults::empty($pageId)`.
 
 ---
 

@@ -5,6 +5,7 @@ namespace ConstructorIO\Laravel;
 use Closure;
 use ConstructorIO\Laravel\Contracts\SearchProvider;
 use ConstructorIO\Laravel\DataTransferObjects\AutocompleteResults;
+use ConstructorIO\Laravel\DataTransferObjects\RecommendationPageResults;
 use ConstructorIO\Laravel\DataTransferObjects\RecommendationResults;
 use ConstructorIO\Laravel\DataTransferObjects\SearchResults;
 use ConstructorIO\Laravel\Services\AgentService;
@@ -207,6 +208,16 @@ class Constructor implements SearchProvider
     public function getItemRecommendations(string $podId, string|array $itemId, array $options = []): RecommendationResults
     {
         return $this->recommendations->getItemRecommendations($podId, $itemId, $options);
+    }
+
+    /**
+     * Every pod on a recommendation page, in one request (beta endpoint).
+     *
+     * @param  array<string, mixed>  $options  See RecommendationService::getPage().
+     */
+    public function getRecommendationPage(string $pageId, array $options = []): RecommendationPageResults
+    {
+        return $this->recommendations->getPage($pageId, $options);
     }
 
     /*

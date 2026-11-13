@@ -31,6 +31,7 @@ A full review against Constructor's API reference and backend-integration docume
 - Client ID cookie generation on a first visit. `s=1` when the session cookie is missing.
 - `browseItems()`, search redirects, `resultId` on every result DTO, sort options, refined content, related searches, range facets, hierarchical facets and full facet options.
 - Recommendation `term`, `filters`, `variation_id` and multiple `item_id`s.
+- `Constructor::getRecommendationPage()` (`RecommendationService::getPage()`): every pod on a recommendation page in one request, deduplicated across pods, with `pod_overrides` for per-pod settings. Returns `RecommendationPageResults`; each pod carries its own `resultId` for tracking. Uses the beta `/recommendations/v1/pages/{page_id}` endpoint.
 - Full AI Shopping Agent event support: `follow_up_refinement`, `server_error`, `article_reference`, `image_meta` and recipe events. Result IDs for tracking. `askProductQuestionStreaming()`.
 - Catalog: `variations_file`, JSONL `format`, `patch_delta`, `on_missing`, `mode`, `notification_email`. `upsertItems()`, `patchItems()`, `deleteItems()`, `getItem()`, `listItems()`, `verifyCredentials()`.
 - `Scout\ConstructorSearchable` interface for Scout models.

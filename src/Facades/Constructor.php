@@ -22,6 +22,7 @@ use Illuminate\Support\Facades\Facade;
  * @method static \ConstructorIO\Laravel\DataTransferObjects\AutocompleteResults getZeroStateData(array<string, mixed> $options = [])
  * @method static \ConstructorIO\Laravel\DataTransferObjects\RecommendationResults getRecommendations(string $podId, array<string, mixed> $options = [])
  * @method static \ConstructorIO\Laravel\DataTransferObjects\RecommendationResults getItemRecommendations(string $podId, string|list<string> $itemId, array<string, mixed> $options = [])
+ * @method static \ConstructorIO\Laravel\DataTransferObjects\RecommendationPageResults getRecommendationPage(string $pageId, array<string, mixed> $options = [])
  * @method static array<string, array<string, mixed>> getFacets(string $query, array<string, mixed> $filters = [])
  * @method static list<array<string, mixed>> getAvailableFacets(array<string, mixed> $options = [])
  * @method static list<array<string, mixed>> getFacetValuesWithImages(string $facetName, int $maxItems = 10)
